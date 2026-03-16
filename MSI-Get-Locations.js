@@ -4,30 +4,6 @@
  */
 define(['N/query'], (query) => {
 
-    /**
-     * Konversi ISO 8601 ke format Oracle SQL: "YYYY-MM-DD HH24:MI:SS"
-     * Timezone offset diabaikan — waktu lokal dipertahankan apa adanya
-     */
-    const parseISOToOracle = (isoStr) => {
-        if (!isoStr) return null;
-        let match = isoStr.match(/^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}:\d{2}))?/);
-        if (!match) return isoStr;
-        let datePart = match[1];
-        let timePart = match[2] || '00:00:00';
-        return `${datePart} ${timePart}`;
-    };
-
-    // Konversi "D/M/YYYY" (NetSuite date) ke ISO 8601 "YYYY-MM-DDT00:00:00+07:00"
-    const parseNSDateToISO = (nsDate) => {
-        if (!nsDate) return null;
-        const m = String(nsDate).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-        if (!m) return nsDate;
-        const day   = String(m[1]).padStart(2, '0');
-        const month = String(m[2]).padStart(2, '0');
-        const year  = m[3];
-        return `${year}-${month}-${day}T00:00:00+07:00`;
-    };
-
     // Konversi "T"/"F" string ke boolean
     const toBool = (val) => val === 'T' || val === true;
 
@@ -95,7 +71,7 @@ define(['N/query'], (query) => {
             // Filter: lastmodified (on or after)
             if (filters.lastmodified) {
                 conditions.push(`l.lastmodifieddate <= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')`);
-                params.push(parseISOToOracle(filters.lastmodified));
+                params.push(filters.lastmodified);
             }
 
             const whereClause = conditions.length > 0
@@ -136,7 +112,7 @@ define(['N/query'], (query) => {
                 location_type_name       : r.location_type_name || null,
                 timezone                 : r.timezone || null,
                 make_inventory_available : toBool(r.makeinventoryavailable),
-                last_modified            : parseNSDateToISO(r.lastmodifieddate)
+                last_modified            : r.lastmodifieddate
             }));
 
             const totalRecords = allData.length;
