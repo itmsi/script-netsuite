@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  */
-define(['N/search'], (search) => {
+define(['N/search', 'N/query'], (search, query) => {
 
     // Konversi tanggal NetSuite ("2/1/2029" atau "10/2/2026 2:22 PM") ke ISO 8601
     const formatToISO = (dateStr) => {
@@ -162,7 +162,8 @@ define(['N/search'], (search) => {
 
             const pageResult = pagedData.fetch({ index: pageIndex });
 
-            const data = pageResult.data.map(r => ({
+            // ── Build header data ─────────────────────────────────────────────
+            const headers = pageResult.data.map(r => ({
                 id            : String(r.id),
                 tranid        : r.getValue('tranid')                       || null,
                 tran_date     : formatToISO(r.getValue('trandate'))        || null,
@@ -172,6 +173,55 @@ define(['N/search'], (search) => {
                 customer_name : r.getText('entity')                        || null,
                 memo          : r.getValue('memo')                         || null,
                 last_modified : formatToISO(r.getValue('lastmodifieddate')) || null
+            }));
+
+            // ── Fetch line items via SuiteQL (tl.description tersedia di SuiteQL) ──
+            const soIds        = headers.map(h => h.id);
+            const placeholders = soIds.map(() => '?').join(', ');
+
+            const lineSql = `
+                SELECT
+                    tl.transaction                      AS so_id,
+                    tl.linesequencenumber               AS line_number,
+                    tl.item                             AS item_id,
+                    BUILTIN.DF(tl.item)                 AS item_name,
+                    tl.memo                                     AS description,
+                    ABS(tl.quantity)                            AS quantity,
+                    tl.rate                                     AS rate,
+                    ABS(tl.netamount)                           AS amount,
+                    tl.location                         AS location_id,
+                    BUILTIN.DF(tl.location)             AS location_name
+                FROM transactionline tl
+                WHERE tl.transaction IN (${placeholders})
+                  AND tl.mainline    = 'F'
+                  AND tl.taxline     = 'F'
+                  AND tl.itemtype   IS NOT NULL
+                ORDER BY tl.transaction, tl.linesequencenumber
+            `;
+
+            const lineResults = query.runSuiteQL({ query: lineSql, params: soIds.map(Number) }).asMappedResults();
+
+            const linesByOrder = {};
+            lineResults.forEach(line => {
+                const soId = String(line.so_id);
+                if (!linesByOrder[soId]) linesByOrder[soId] = [];
+                linesByOrder[soId].push({
+                    line_number   : line.line_number   != null ? Number(line.line_number) : null,
+                    item_id       : line.item_id       != null ? String(line.item_id)     : null,
+                    item_name     : line.item_name                                        || null,
+                    description   : line.description                                      || null,
+                    quantity      : line.quantity      != null ? Number(line.quantity)     : null,
+                    rate          : line.rate          != null ? Number(line.rate)         : null,
+                    amount        : line.amount        != null ? Number(line.amount)       : null,
+                    location_id   : line.location_id   != null ? String(line.location_id) : null,
+                    location_name : line.location_name                                    || null
+                });
+            });
+
+            // ── Merge header + lines ──────────────────────────────────────────
+            const data = headers.map(h => ({
+                ...h,
+                items: linesByOrder[h.id] || []
             }));
 
             return {
