@@ -5,27 +5,44 @@
  * GET data Purchase Order (header + lines) dengan pagination & filters
  *
  * POST body:
- * {
- *   "page":       1,               // Halaman (default: 1)
- *   "page_size":  20,              // Jumlah data per halaman (default: 20)
- *   "sort_by":    "t.id",          // Field untuk sorting (default: "t.id")
- *   "sort_order": "DESC",          // ASC / DESC (default: "DESC")
- *   "filters": {
- *     "po_ids":    [5157, 5158],   // Filter by ID (opsional)
- *     "po_number": "PO-2026-001",  // Filter by nomor PO (opsional)
- *     "status":    "PendReceipt",  // Filter status PO (opsional)
- *                                  //   PendReceipt = Pending Receipt
- *                                  //   PendBilling = Pending Billing
- *                                  //   FullyBilled = Fully Billed
- *                                  //   Closed      = Closed
- *     "date_from": "2026-01-01",   // Filter tanggal mulai (opsional, YYYY-MM-DD)
- *     "date_to":   "2026-03-31",   // Filter tanggal akhir (opsional, YYYY-MM-DD)
- *     "vendor_id": 10              // Filter by vendor ID (opsional)
- *   }
+{
+  "page":       1,               // Halaman (default: 1)
+  "page_size":  20,              // Jumlah data per halaman (default: 20)
+  "sort_by":    "t.id",          // Field untuk sorting (default: "t.id")
+  "sort_order": "DESC",          // ASC / DESC (default: "DESC")
+  "filters": {
+    "po_ids":    [5157, 5158],   // Filter by ID (opsional)
+    "po_number": "PO-2026-001",  // Filter by nomor PO (opsional)
+    "status":"PurchOrd:F",           // Filter status PO (opsional) — gunakan kode huruf:
+                                 //   PurchOrd:A = Pending Supervisor Approval
+                                 //   PurchOrd:B = Pending Receipt
+                                 //   PurchOrd:C = Partially Received
+                                 //   PurchOrd:D = Pending Billing/Partially Received
+                                 //   PurchOrd:E = Pending Bill (partial)
+                                 //   PurchOrd:F = Pending Bill
+                                 //   PurchOrd:G = Fully Billed
+                                 //   PurchOrd:H = Closed
+    "lastmodified": "2026-03-31T23:59:00+07:00", // Filter tanggal diubah (opsional)
+    "vendor_id": 10              // Filter by vendor ID (opsional)
+  }
  * }
  */
 
 define(['N/query'], (query) => {
+
+    // Format tanggal SuiteQL ("M/D/YYYY" atau "YYYY-MM-DD") ke ISO 8601
+    const formatDate = (val) => {
+        if (!val) return null;
+        // Jika sudah YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val + 'T00:00:00+07:00';
+        // Format M/D/YYYY
+        const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m) {
+            const pad = n => String(n).padStart(2, '0');
+            return `${m[3]}-${pad(m[2])}-${pad(m[1])}T00:00:00+07:00`;
+        }
+        return val;
+    };
 
     const post = (body) => {
 
@@ -58,18 +75,18 @@ define(['N/query'], (query) => {
             }
 
             if (filters.status) {
+                // SuiteQL menyimpan status sebagai "PurchOrd:F" — tambahkan prefix jika belum ada
+                const rawStatus = filters.status;
+                const status = rawStatus.startsWith('PurchOrd:') ? rawStatus : `PurchOrd:${rawStatus}`;
                 conditions.push(`t.status = ?`);
-                params.push(filters.status);
+                params.push(status);
             }
 
-            if (filters.date_from) {
-                conditions.push(`t.trandate >= TO_DATE(?, 'YYYY-MM-DD')`);
-                params.push(filters.date_from);
-            }
-
-            if (filters.date_to) {
-                conditions.push(`t.trandate <= TO_DATE(?, 'YYYY-MM-DD')`);
-                params.push(filters.date_to);
+            if (filters.lastmodified) {
+                // Strip timezone +07:00 / T separator agar cocok dengan TO_DATE format
+                const raw = filters.lastmodified.replace('T', ' ').replace(/\+\d{2}:\d{2}$/, '').trim();
+                conditions.push(`t.lastmodifieddate >= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')`);
+                params.push(raw);
             }
 
             if (filters.vendor_id) {
@@ -84,15 +101,14 @@ define(['N/query'], (query) => {
                 SELECT
                     t.id                                AS po_id,
                     t.tranid                            AS po_number,
-                    TO_CHAR(t.trandate, 'YYYY-MM-DD')  AS po_date,
+                    t.trandate                          AS po_date,
                     t.status                            AS po_status,
                     BUILTIN.DF(t.status)                AS po_status_label,
                     t.memo                              AS memo,
                     t.entity                            AS vendor_id,
                     BUILTIN.DF(t.entity)                AS vendor_name,
                     t.currency                          AS currency_id,
-                    BUILTIN.DF(t.currency)              AS currency_symbol,
-                    t.total                             AS total_amount
+                    BUILTIN.DF(t.currency)              AS currency_symbol
                 FROM transaction t
                 ${whereClause}
                 ORDER BY ${sortBy} ${sortOrder}
@@ -154,8 +170,17 @@ define(['N/query'], (query) => {
             });
 
             let data = pagedHeaders.map(header => ({
-                ...header,
-                lines: linesByPo[String(header.po_id)] || []
+                po_id          : String(header.po_id),
+                po_number      : header.po_number,
+                po_date        : formatDate(header.po_date),
+                po_status      : header.po_status,
+                po_status_label: header.po_status_label,
+                memo           : header.memo || null,
+                vendor_id      : header.vendor_id ? String(header.vendor_id) : null,
+                vendor_name    : header.vendor_name || null,
+                currency_id    : header.currency_id ? String(header.currency_id) : null,
+                currency_symbol: header.currency_symbol || null,
+                lines          : linesByPo[String(header.po_id)] || []
             }));
 
             return {
