@@ -70,7 +70,7 @@ define(['N/query'], (query) => {
 
             // Filter: lastmodified (on or after)
             if (filters.lastmodified) {
-                conditions.push(`l.lastmodifieddate <= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')`);
+                conditions.push(`l.lastmodifieddate >= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')`);
                 params.push(filters.lastmodified);
             }
 

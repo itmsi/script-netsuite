@@ -101,11 +101,11 @@ define(['N/search'], (search) => {
                 searchFilters.push('AND', ['entity', 'anyof', ids]);
             }
 
-            // Filter: lastmodified — return data modified on or before this date
+            // Filter: lastmodified — return data modified on or after this date
             if (filters.lastmodified) {
                 const d      = new Date(filters.lastmodified);
                 const nsDate = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
-                searchFilters.push('AND', ['lastmodifieddate', 'onorbefore', nsDate]);
+                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
             }
 
             // ── Sort column mapping ───────────────────────────────────────────

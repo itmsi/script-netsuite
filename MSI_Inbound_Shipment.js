@@ -62,7 +62,7 @@ define(['N/query'], (query) => {
             }
 
             if (filters.lastmodified) {
-                conditions.push("s.lastmodifieddate <= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')");
+                conditions.push("s.lastmodifieddate >= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')");
                 params.push(parseISOToOracle(filters.lastmodified));
             }
 
