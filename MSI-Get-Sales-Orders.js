@@ -188,8 +188,25 @@ define(['N/search', 'N/query'], (search, query) => {
                     tl.memo                             AS description,
                     ABS(tl.quantity)                    AS quantity,
 
-                    -- 🔥 SHIPPED (dari Item Fulfillment)
-                    NVL(SUM(ABS(itl.quantity)), 0)      AS shipped,
+                    NVL((
+                        SELECT SUM(qty_per_fulfillment)
+                        FROM (
+                            SELECT 
+                                it2.id,
+                                MAX(ABS(itl2.quantity)) AS qty_per_fulfillment
+                            FROM NextTransactionLineLink ntl2
+                            JOIN transaction it2 
+                                ON it2.id = ntl2.nextdoc
+                                AND it2.type = 'ItemShip'
+                            JOIN transactionline itl2
+                                ON itl2.transaction = it2.id
+                                AND itl2.mainline = 'F'
+                                AND itl2.item = tl.item
+                            WHERE ntl2.previousdoc = tl.transaction
+                            AND ntl2.previousline = tl.id
+                            GROUP BY it2.id
+                        )
+                    ), 0) AS shipped,
 
                     tl.rate                             AS rate,
                     ABS(tl.netamount)                   AS amount,
@@ -198,30 +215,10 @@ define(['N/search', 'N/query'], (search, query) => {
 
                 FROM transactionline tl
 
-                LEFT JOIN NextTransactionLineLink ntl
-                    ON ntl.previousdoc = tl.transaction
-                    AND ntl.previousline = tl.id
-
-                LEFT JOIN transactionline itl
-                    ON itl.transaction = ntl.nextdoc
-                    AND itl.id = ntl.nextline
-
                 WHERE tl.transaction IN (${placeholders})
                 AND tl.mainline    = 'F'
                 AND tl.taxline     = 'F'
                 AND tl.itemtype   IS NOT NULL
-
-                GROUP BY
-                    tl.transaction,
-                    tl.linesequencenumber,
-                    tl.item,
-                    BUILTIN.DF(tl.item),
-                    tl.memo,
-                    tl.quantity,
-                    tl.rate,
-                    tl.netamount,
-                    tl.location,
-                    BUILTIN.DF(tl.location)
 
                 ORDER BY tl.transaction, tl.linesequencenumber
             `;
