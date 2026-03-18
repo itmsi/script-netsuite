@@ -70,7 +70,11 @@ define(['N/record', 'N/log'], function (record, log) {
                 var matchedItem = null;
 
                 for (var p = 0; p < payloadItems.length; p++) {
-                    if (payloadItems[p].line == i) {
+
+                    var payloadLine = payloadItems[p].line;
+
+                    // 🔥 handle line_number dari API (1-based)
+                    if (payloadLine && (payloadLine - 1) == i) {
                         matchedItem = payloadItems[p];
                         break;
                     }
