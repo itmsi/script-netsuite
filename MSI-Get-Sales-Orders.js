@@ -185,17 +185,43 @@ define(['N/search', 'N/query'], (search, query) => {
                     tl.linesequencenumber               AS line_number,
                     tl.item                             AS item_id,
                     BUILTIN.DF(tl.item)                 AS item_name,
-                    tl.memo                                     AS description,
-                    ABS(tl.quantity)                            AS quantity,
-                    tl.rate                                     AS rate,
-                    ABS(tl.netamount)                           AS amount,
+                    tl.memo                             AS description,
+                    ABS(tl.quantity)                    AS quantity,
+
+                    NVL(SUM(ABS(itl.quantity)), 0)      AS picked,
+
+                    tl.rate                             AS rate,
+                    ABS(tl.netamount)                   AS amount,
                     tl.location                         AS location_id,
                     BUILTIN.DF(tl.location)             AS location_name
+
                 FROM transactionline tl
+
+                LEFT JOIN NextTransactionLineLink ntl
+                    ON ntl.previousdoc = tl.transaction
+                    AND ntl.previousline = tl.id
+
+                LEFT JOIN transactionline itl
+                    ON itl.transaction = ntl.nextdoc
+                    AND itl.id = ntl.nextline
+
                 WHERE tl.transaction IN (${placeholders})
-                  AND tl.mainline    = 'F'
-                  AND tl.taxline     = 'F'
-                  AND tl.itemtype   IS NOT NULL
+                AND tl.mainline    = 'F'
+                AND tl.taxline     = 'F'
+                AND tl.itemtype   IS NOT NULL
+
+                GROUP BY
+                    tl.transaction,
+                    tl.linesequencenumber,
+                    tl.item,
+                    BUILTIN.DF(tl.item),
+                    tl.memo,
+                    tl.quantity,
+                    tl.rate,
+                    tl.netamount,
+                    tl.location,
+                    BUILTIN.DF(tl.location)
+
                 ORDER BY tl.transaction, tl.linesequencenumber
             `;
 
@@ -211,6 +237,7 @@ define(['N/search', 'N/query'], (search, query) => {
                     item_name     : line.item_name                                        || null,
                     description   : line.description                                      || null,
                     quantity      : line.quantity      != null ? Number(line.quantity)     : null,
+                    picked        : line.picked        != null ? Number(line.picked)       : 0,
                     rate          : line.rate          != null ? Number(line.rate)         : null,
                     amount        : line.amount        != null ? Number(line.amount)       : null,
                     location_id   : line.location_id   != null ? String(line.location_id) : null,
