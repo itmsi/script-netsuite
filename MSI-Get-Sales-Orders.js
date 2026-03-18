@@ -188,7 +188,8 @@ define(['N/search', 'N/query'], (search, query) => {
                     tl.memo                             AS description,
                     ABS(tl.quantity)                    AS quantity,
 
-                    NVL(SUM(ABS(itl.quantity)), 0)      AS picked,
+                    -- 🔥 SHIPPED (dari Item Fulfillment)
+                    NVL(SUM(ABS(itl.quantity)), 0)      AS shipped,
 
                     tl.rate                             AS rate,
                     ABS(tl.netamount)                   AS amount,
@@ -237,7 +238,7 @@ define(['N/search', 'N/query'], (search, query) => {
                     item_name     : line.item_name                                        || null,
                     description   : line.description                                      || null,
                     quantity      : line.quantity      != null ? Number(line.quantity)     : null,
-                    picked        : line.picked        != null ? Number(line.picked)       : 0,
+                    shipped       : line.shipped       != null ? Number(line.shipped)      : 0,
                     rate          : line.rate          != null ? Number(line.rate)         : null,
                     amount        : line.amount        != null ? Number(line.amount)       : null,
                     location_id   : line.location_id   != null ? String(line.location_id) : null,

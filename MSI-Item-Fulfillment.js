@@ -174,6 +174,19 @@ define(['N/record', 'N/log'], function (record, log) {
                 };
             }
 
+            var shipStatusMap = {
+                picked: 'A',
+                packed: 'B',
+                shipped: 'C'
+                };
+
+                var status = context.ship_status || 'shipped';
+
+                fulfillment.setValue({
+                    fieldId: 'shipstatus',
+                    value: shipStatusMap[status] || 'C'
+                });
+
             var fulfillmentId = fulfillment.save();
 
             return {
