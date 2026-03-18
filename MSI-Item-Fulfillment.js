@@ -8,7 +8,7 @@ define(['N/record', 'N/log'], function (record, log) {
 
         try {
 
-            const soId = context.sales_order_id;
+            var soId = context.sales_order_id;
 
             if (!soId) {
                 return {
@@ -17,141 +17,152 @@ define(['N/record', 'N/log'], function (record, log) {
                 };
             }
 
-            // =========================
-            // 🔥 TRANSFORM SO → FULFILLMENT
-            // =========================
-            const fulfillment = record.transform({
+            var fulfillment = record.transform({
                 fromType: record.Type.SALES_ORDER,
                 fromId: soId,
                 toType: record.Type.ITEM_FULFILLMENT,
                 isDynamic: true
             });
 
-            const lineCount = fulfillment.getLineCount({
+            var lineCount = fulfillment.getLineCount({
                 sublistId: 'item'
             });
 
             log.debug('LINE COUNT', lineCount);
 
-            let hasValidLine = false;
+            var hasValidLine = false;
+
+            var payloadItems = context.items || [];
 
             // =========================
-            // 🔥 LOOP SEMUA LINE
+            // 🔥 LOOP LINE NETSUITE
             // =========================
-            for (let i = 0; i < lineCount; i++) {
+            for (var i = 0; i < lineCount; i++) {
 
                 fulfillment.selectLine({
                     sublistId: 'item',
                     line: i
                 });
 
-                const qtyRemaining = fulfillment.getCurrentSublistValue({
+                var qtyRemaining = fulfillment.getCurrentSublistValue({
                     sublistId: 'item',
                     fieldId: 'quantityremaining'
                 });
 
-                const itemType = fulfillment.getCurrentSublistValue({
+                var needInvDetail = fulfillment.getCurrentSublistValue({
                     sublistId: 'item',
-                    fieldId: 'itemtype'
+                    fieldId: 'inventorydetailreq'
                 });
 
                 log.debug('CHECK LINE', {
-                    i,
-                    qtyRemaining,
-                    itemType
+                    line: i,
+                    qtyRemaining: qtyRemaining,
+                    needInvDetail: needInvDetail
+                });
+
+                if (qtyRemaining <= 0) {
+                    continue;
+                }
+
+                // =========================
+                // 🔥 CARI PAYLOAD YANG MATCH
+                // =========================
+                var matchedItem = null;
+
+                for (var p = 0; p < payloadItems.length; p++) {
+                    if (payloadItems[p].line == i) {
+                        matchedItem = payloadItems[p];
+                        break;
+                    }
+                }
+
+                // kalau tidak ada di payload → skip
+                if (!matchedItem) {
+                    continue;
+                }
+
+                hasValidLine = true;
+
+                // =========================
+                // ✅ SET RECEIVE
+                // =========================
+                fulfillment.setCurrentSublistValue({
+                    sublistId: 'item',
+                    fieldId: 'itemreceive',
+                    value: true
+                });
+
+                var serials = matchedItem.serials || [];
+                var payloadQty = matchedItem.quantity;
+
+                var qtyToFulfill = 1;
+
+                if (serials && serials.length > 0) {
+                    qtyToFulfill = serials.length;
+                } else if (payloadQty && payloadQty > 0) {
+                    qtyToFulfill = payloadQty;
+                }
+
+                // jangan lebih dari remaining
+                if (qtyToFulfill > qtyRemaining) {
+                    qtyToFulfill = qtyRemaining;
+                }
+
+                fulfillment.setCurrentSublistValue({
+                    sublistId: 'item',
+                    fieldId: 'quantity',
+                    value: qtyToFulfill
                 });
 
                 // =========================
-                // ✅ HANYA PROSES YANG MASIH ADA SISA
+                // 🔥 INVENTORY DETAIL
                 // =========================
-                if (qtyRemaining > 0) {
+                if (needInvDetail && serials.length > 0) {
 
-                    hasValidLine = true;
-
-                    // ✅ WAJIB
-                    fulfillment.setCurrentSublistValue({
+                    var inventoryDetail = fulfillment.getCurrentSublistSubrecord({
                         sublistId: 'item',
-                        fieldId: 'itemreceive',
-                        value: true
+                        fieldId: 'inventorydetail'
                     });
 
-                    // =========================
-                    // 🔥 SERIAL HANDLING
-                    // =========================
-                    const payloadItem = context.items?.[0] || {};
-                    const serials = payloadItem.serials || [];
+                    for (var s = 0; s < serials.length; s++) {
 
-                    // qty = jumlah serial
-                    const qtyToFulfill = serials.length > 0 ? serials.length : 1;
+                        var sn = serials[s];
 
-                    fulfillment.setCurrentSublistValue({
-                        sublistId: 'item',
-                        fieldId: 'quantity',
-                        value: qtyToFulfill
-                    });
-
-                    const needInvDetail = fulfillment.getCurrentSublistValue({
-                        sublistId: 'item',
-                        fieldId: 'inventorydetailreq'
-                    });
-
-                    log.debug('NEED INV DETAIL', needInvDetail);
-
-                    // =========================
-                    // 🔥 INVENTORY DETAIL (SERIAL)
-                    // =========================
-                    if (needInvDetail && serials.length > 0) {
-
-                        const inventoryDetail = fulfillment.getCurrentSublistSubrecord({
-                            sublistId: 'item',
-                            fieldId: 'inventorydetail'
+                        inventoryDetail.selectNewLine({
+                            sublistId: 'inventoryassignment'
                         });
 
-                        serials.forEach((sn) => {
-
-                            inventoryDetail.selectNewLine({
-                                sublistId: 'inventoryassignment'
+                        try {
+                            inventoryDetail.setCurrentSublistText({
+                                sublistId: 'inventoryassignment',
+                                fieldId: 'issueinventorynumber',
+                                text: String(sn)
                             });
-
-                            // 🔥 FIX UTAMA (TEXT dulu)
-                            try {
-                                inventoryDetail.setCurrentSublistText({
-                                    sublistId: 'inventoryassignment',
-                                    fieldId: 'issueinventorynumber',
-                                    text: String(sn)
-                                });
-                            } catch (e) {
-                                inventoryDetail.setCurrentSublistValue({
-                                    sublistId: 'inventoryassignment',
-                                    fieldId: 'issueinventorynumber',
-                                    value: sn
-                                });
-                            }
-
+                        } catch (e) {
                             inventoryDetail.setCurrentSublistValue({
                                 sublistId: 'inventoryassignment',
-                                fieldId: 'quantity',
-                                value: 1
+                                fieldId: 'issueinventorynumber',
+                                value: sn
                             });
+                        }
 
-                            inventoryDetail.commitLine({
-                                sublistId: 'inventoryassignment'
-                            });
+                        inventoryDetail.setCurrentSublistValue({
+                            sublistId: 'inventoryassignment',
+                            fieldId: 'quantity',
+                            value: 1
+                        });
+
+                        inventoryDetail.commitLine({
+                            sublistId: 'inventoryassignment'
                         });
                     }
-
-                    // =========================
-                    // ✅ COMMIT LINE
-                    // =========================
-                    fulfillment.commitLine({
-                        sublistId: 'item'
-                    });
                 }
+
+                fulfillment.commitLine({
+                    sublistId: 'item'
+                });
             }
 
-            // =========================
-            // ❌ VALIDASI
-            // =========================
             if (!hasValidLine) {
                 return {
                     status: 'error',
@@ -159,10 +170,7 @@ define(['N/record', 'N/log'], function (record, log) {
                 };
             }
 
-            // =========================
-            // 💾 SAVE
-            // =========================
-            const fulfillmentId = fulfillment.save();
+            var fulfillmentId = fulfillment.save();
 
             return {
                 status: 'success',
