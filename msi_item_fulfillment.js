@@ -24,6 +24,22 @@ define(['N/record', 'N/log'], function (record, log) {
                 isDynamic: true
             });
 
+            // 🔥 Opsional: User bisa ganti custom form
+            if (context.customform) {
+                fulfillment.setValue({ fieldId: 'customform', value: context.customform });
+            }
+
+            // 🔥 (BARU) Auto-map semua custom fields dari body ke header Item Fulfillment
+            for (var key in context) {
+                if (key.indexOf('custbody') === 0) {
+                    try {
+                        fulfillment.setValue({ fieldId: key, value: context[key] });
+                    } catch (custErr) {
+                        log.error('SET CUSTOM FIELD ERROR', 'Field: ' + key + ' Error: ' + custErr.message);
+                    }
+                }
+            }
+
             var lineCount = fulfillment.getLineCount({
                 sublistId: 'item'
             });
@@ -118,6 +134,22 @@ define(['N/record', 'N/log'], function (record, log) {
                     value: qtyToFulfill
                 });
 
+                // 🔥 (BARU) Auto-map custom fields per baris (dimulai dengan custcol_)
+                // Contoh: "custcol_me_status": 1
+                for (var lineKey in matchedItem) {
+                    if (lineKey.indexOf('custcol') === 0) {
+                        try {
+                            fulfillment.setCurrentSublistValue({
+                                sublistId: 'item',
+                                fieldId: lineKey,
+                                value: matchedItem[lineKey]
+                            });
+                        } catch (lineErr) {
+                            log.error('SET LINE FIELD ERROR', 'Field: ' + lineKey + ' Error: ' + lineErr.message);
+                        }
+                    }
+                }
+
                 // =========================
                 // 🔥 INVENTORY DETAIL
                 // =========================
@@ -127,6 +159,18 @@ define(['N/record', 'N/log'], function (record, log) {
                         sublistId: 'item',
                         fieldId: 'inventorydetail'
                     });
+
+                    // Hapus line default yang ditarik oleh NetSuite (jika ada)
+                    // agar tidak bentrok dengan serial dari API
+                    var existingDetailLines = inventoryDetail.getLineCount({
+                        sublistId: 'inventoryassignment'
+                    });
+                    for (var r = existingDetailLines - 1; r >= 0; r--) {
+                        inventoryDetail.removeLine({
+                            sublistId: 'inventoryassignment',
+                            line: r
+                        });
+                    }
 
                     for (var s = 0; s < serials.length; s++) {
 
@@ -148,6 +192,20 @@ define(['N/record', 'N/log'], function (record, log) {
                                 fieldId: 'issueinventorynumber',
                                 value: sn
                             });
+                        }
+
+                        // Set Inventory Status jika diaktifkan (Default: 1 / Good)
+                        // Inilah field "Status" yang membuat error di baris 191
+                        var invStatus = matchedItem.inventorystatus || 1;
+                        try {
+                            inventoryDetail.setCurrentSublistValue({
+                                sublistId: 'inventoryassignment',
+                                fieldId: 'inventorystatus',
+                                value: invStatus
+                            });
+                        } catch (statusErr) {
+                            // Abaikan jika fitur Inventory Status tidak dipakai, 
+                            // error yang lebih spesifik akan ditangkap saat commitLine jika memang wajib.
                         }
 
                         inventoryDetail.setCurrentSublistValue({
@@ -174,20 +232,32 @@ define(['N/record', 'N/log'], function (record, log) {
                 };
             }
 
+            // Set Status sebelum di save
             var shipStatusMap = {
                 picked: 'A',
                 packed: 'B',
                 shipped: 'C'
-                };
+            };
+            var statusStr = context.ship_status || 'shipped';
+            var statusCode = shipStatusMap[statusStr.toLowerCase()] || 'C';
 
-                var status = context.ship_status || 'shipped';
-
+            try {
                 fulfillment.setValue({
                     fieldId: 'shipstatus',
-                    value: shipStatusMap[status] || 'C'
+                    value: statusCode
                 });
+            } catch (e) {
+                // fallbacks if standard value fail
+                fulfillment.setText({
+                    fieldId: 'shipstatus',
+                    text: 'Shipped' // try text mapping if value fails
+                });
+            }
 
-            var fulfillmentId = fulfillment.save();
+            var fulfillmentId = fulfillment.save({
+                enableSourcing: true,
+                ignoreMandatoryFields: true // Bypass UI validation errors for standard fields mapped dynamically
+            });
 
             return {
                 status: 'success',
