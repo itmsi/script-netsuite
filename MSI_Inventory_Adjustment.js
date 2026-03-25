@@ -10,6 +10,7 @@
  *   "account": 123,                    // Internal ID Adjustment Account (wajib)
  *   "adj_location": 5,                 // Internal ID Adjustment Location - header (wajib)
  *   "department": 10,                  // Internal ID Department (wajib)
+ *   "class"     : 3,                   // Internal ID Class / Classification (wajib jika form mewajibkan)
  *   "trandate": "2026-03-13",          // Tanggal transaksi (opsional, default: hari ini)
  *   "posting_period": 20,              // Internal ID Posting Period (opsional)
  *   "memo": "Penyesuaian stok",        // Memo header (opsional)
@@ -23,6 +24,7 @@
  *       "quantity": 10,               // Qty penyesuaian: positif=tambah, negatif=kurang (wajib jika tidak pakai serials)
  *       "unit_cost": 150000,           // Proposed Unit Cost (opsional)
  *       "department": 10,              // Department per baris (opsional, override header)
+ *       "class"     : 3,              // Class per baris (opsional, override header)
  *       "me_description": "Keterangan",// ME \ Description per baris (opsional)
  *       "po_number_line": "PO-001",    // Purchase Number (Line) (opsional)
  *       "memo": "Catatan baris",       // Memo per baris (opsional)
@@ -51,6 +53,9 @@ define(['N/record', 'N/format'], (record, format) => {
             if (!body.department) {
                 return { status: 'error', message: '"department" wajib diisi' };
             }
+            if (!body.class) {
+                return { status: 'error', message: '"class" (Classification) wajib diisi' };
+            }
             if (!body.lines || !Array.isArray(body.lines) || body.lines.length === 0) {
                 return { status: 'error', message: '"lines" wajib diisi dan tidak boleh kosong' };
             }
@@ -70,6 +75,7 @@ define(['N/record', 'N/format'], (record, format) => {
             invAdj.setValue({ fieldId: 'account',      value: body.account });
             invAdj.setValue({ fieldId: 'adjlocation',  value: body.adj_location });
             invAdj.setValue({ fieldId: 'department',   value: body.department });
+            invAdj.setValue({ fieldId: 'class',        value: body.class });
 
             if (body.trandate) {
                 let parsedDate = format.parse({
@@ -153,6 +159,13 @@ define(['N/record', 'N/format'], (record, format) => {
                         value:     lineData.department
                     });
                 }
+
+                // Class per baris — WAJIB diisi, fallback ke header class
+                invAdj.setCurrentSublistValue({
+                    sublistId: 'inventory',
+                    fieldId:   'class',
+                    value:     lineData.class !== undefined ? lineData.class : body.class
+                });
 
                 // Custom kolom: ME \ Description
                 if (lineData.me_description !== undefined) {
