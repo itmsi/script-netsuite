@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  *
- * Get List Vendor Return (Return Authorization) via POST
+ * Get List Sales Delivery (Item Fulfillment) via POST
  *
  * POST body:
  {
@@ -11,7 +11,7 @@
    "sort_by"    : "trandate",
    "sort_order" : "DESC",
    "filters": {
-     "lastmodified": "2026-12-16T23:59:00"
+     "lastmodified": "2026-03-01T00:00:00"
    }
  }
  */
@@ -46,11 +46,11 @@ define(['N/query', 'N/log'], function (query, log) {
 
             // =========================
             // 🔥 FILTER BUILDER
-            // Vendor Return Authorization type = 'VendRtnAuth'
             // =========================
-            var whereClauses = ["t.type = 'VendAuth'"];
+            var whereClauses = ["t.type = 'ItemShip'"];
 
             if (filters.lastmodified) {
+                // Konversi ISO ke format: MM/DD/YYYY untuk perbandingan date di SuiteQL
                 var nsDate = isoToNsDate(filters.lastmodified);
                 log.debug('LASTMODIFIED FILTER', nsDate);
                 whereClauses.push("t.lastmodifieddate >= TO_DATE('" + nsDate + "', 'MM/DD/YYYY')");
@@ -102,10 +102,11 @@ define(['N/query', 'N/log'], function (query, log) {
                 "  t.id,",
                 "  t.tranid,",
                 "  t.entity,",
-                "  BUILTIN.DF(t.entity)  AS entity_name,",
+                "  BUILTIN.DF(t.entity)    AS entity_name,",
                 "  t.trandate,",
                 "  t.status,",
-                "  BUILTIN.DF(t.status) AS status_name,",
+                "  BUILTIN.DF(t.status)    AS status_name,",
+                "  t.shipaddress,",
                 "  t.memo,",
                 "  t.lastmodifieddate",
                 "FROM transaction t",
@@ -121,14 +122,15 @@ define(['N/query', 'N/log'], function (query, log) {
 
             var data = rows.map(function (row) {
                 return {
-                    id          : String(row.id),
-                    tranid      : row.tranid,
-                    vendor_id   : String(row.entity),
-                    vendor_name : row.entity_name,
-                    tran_date   : row.trandate,
-                    status_code : row.status,
-                    status_name : row.status_name,
-                    memo        : row.memo,
+                    id           : String(row.id),
+                    tranid       : row.tranid,
+                    customer_id  : String(row.entity),
+                    customer_name: row.entity_name,
+                    tran_date    : row.trandate,
+                    status_code  : row.status,
+                    status_name  : row.status_name,
+                    ship_address : row.shipaddress,
+                    memo         : row.memo,
                     last_modified: row.lastmodifieddate
                 };
             });
@@ -153,17 +155,17 @@ define(['N/query', 'N/log'], function (query, log) {
 
     // =========================
     // 🔥 HELPER: ISO -> MM/DD/YYYY untuk SuiteQL TO_DATE filter
-    // Input : "2026-12-16T23:59:00"
-    // Output: "12/16/2026"
+    // Input : "2026-03-01T00:00:00"
+    // Output: "03/01/2026"
     // =========================
     function isoToNsDate(isoStr) {
         if (!isoStr) return null;
-        var datePart = isoStr.substring(0, 10);  // "2026-12-16"
+        var datePart = isoStr.substring(0, 10);  // "2026-03-01"
         var dp       = datePart.split('-');
         var year     = dp[0];
         var month    = dp[1];
         var day      = dp[2];
-        return month + '/' + day + '/' + year;   // "12/16/2026"
+        return month + '/' + day + '/' + year;   // "03/01/2026"
     }
 
     return { post: post };
