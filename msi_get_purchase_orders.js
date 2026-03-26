@@ -109,6 +109,8 @@ define(['N/query'], (query) => {
                     BUILTIN.DF(t.entity)                AS vendor_name,
                     t.currency                          AS currency_id,
                     BUILTIN.DF(t.currency)              AS currency_symbol,
+                    t.foreigntotal,
+                    t.total,
                     t.lastmodifieddate                  AS last_modified
                 FROM transaction t
                 ${whereClause}
@@ -181,6 +183,8 @@ define(['N/query'], (query) => {
                 vendor_name    : header.vendor_name || null,
                 currency_id    : header.currency_id ? String(header.currency_id) : null,
                 currency_symbol: header.currency_symbol || null,
+                foreigntotal: header.foreigntotal || 0,
+                total   : header.total || 0,
                 last_modified  : formatDate(header.last_modified) || null,
                 lines          : linesByPo[String(header.po_id)] || []
             }));
