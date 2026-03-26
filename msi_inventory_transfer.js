@@ -9,22 +9,24 @@
   {
    "subsidiary"   : 5,               // Internal ID Subsidiary (wajib)
    "from_location": 19,              // Internal ID lokasi asal (wajib, set 'From Location')
-   "to_location"  : 20,              // Internal ID lokasi tujuan (wajib, set 'To Location')
+   "to_location"  : 22,              // Internal ID lokasi tujuan (wajib, set 'To Location')
    "trandate"     : "26-03-2026",    // Tanggal transfer (opsional, default: hari ini)
-   "department"   : 105,               // Internal ID Department (wajib jika Mandatory di UI)
+   "department"   : 8,               // Internal ID Department (wajib jika Mandatory di UI)
    "class"        : 1,               // Internal ID Class (wajib jika Mandatory di UI)
-   "memo"         : "Catatan test",  // Memo (opsional)
-    "custom_fields": {                // Field custom di body (opsional)s
-       "custbody_me_description": "Test Transfer description"
+   "memo"         : "perpindahan unit dari jakarta ke sulawesi",  // Memo (opsional)
+    "custom_fields": {                
+       "custbody_me_description": "perpindahan unit dari jakarta ke sulawesi"
    },
    "lines": [
      {
-       "item"         : 26589,           // Internal ID item (wajib)
+       "item"         : 26606,           // Internal ID item (wajib)
        "quantity"     : 1,             // Jumlah yang dipindah / Qty To Transfer (wajib)
-       "description"  : "Keterangan"  // Deskripsi line (opsional)
+       "description"  : "perpindahan unit",  // Deskripsi line ,
+       "serials": ["VIN-002-7"]   
      }
    ]
  }
+
 
  */
 define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
@@ -240,11 +242,21 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
                         for (var s = 0; s < lineData.serials.length; s++) {
                             inventoryDetail.selectNewLine({ sublistId: 'inventoryassignment' });
 
-                            inventoryDetail.setCurrentSublistValue({
-                                sublistId: 'inventoryassignment',
-                                fieldId  : 'issueinventorynumber',
-                                value    : lineData.serials[s]
-                            });
+                            var serialVal = lineData.serials[s];
+                            // Jika serial formatnya string karakter (bukan ID angka murni), gunakan setText
+                            if (typeof serialVal === 'string' && isNaN(Number(serialVal))) {
+                                inventoryDetail.setCurrentSublistText({
+                                    sublistId: 'inventoryassignment',
+                                    fieldId  : 'issueinventorynumber',
+                                    text     : serialVal
+                                });
+                            } else {
+                                inventoryDetail.setCurrentSublistValue({
+                                    sublistId: 'inventoryassignment',
+                                    fieldId  : 'issueinventorynumber',
+                                    value    : serialVal
+                                });
+                            }
 
                             inventoryDetail.setCurrentSublistValue({
                                 sublistId: 'inventoryassignment',
