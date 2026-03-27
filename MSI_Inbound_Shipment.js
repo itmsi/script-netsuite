@@ -1,6 +1,16 @@
 /**
  * @NApiVersion 2.1
  * @NScriptType Restlet
+ * =============================================
+ * STATUS CODES (shipmentstatus)
+ * status_code       | status_name
+ * ------------------|-----------------------------
+ * toBeShipped       | To be Shipped
+ * inTransit         | In Transit
+ * partiallyReceived | Partially Received
+ * received          | Fully Received
+ * closed            | Closed
+ * =============================================
  */
 
 define(['N/query'], (query) => {
