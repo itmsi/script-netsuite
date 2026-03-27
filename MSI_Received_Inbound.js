@@ -118,17 +118,27 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
         var savedId = loadRec.save()
 
+        // ambil status inbound shipment terbaru dari DB
+        var shipmentInfo = query.runSuiteQL({
+            query: 'SELECT shipmentstatus FROM InboundShipment WHERE id = ?',
+            params: [params.idInboundShipment]
+        }).asMappedResults()
+        var shipmentStatus = shipmentInfo.length > 0 ? shipmentInfo[0].shipmentstatus : null
+        log.debug('inbound shipment status', shipmentStatus)
+
         // step 1: ambil PO IDs dari InboundShipmentItem
         var poResults = query.runSuiteQL({
-            query: 'SELECT DISTINCT purchaseordertransaction FROM InboundShipmentItem WHERE inboundshipment = ?',
+            query: 'SELECT DISTINCT purchaseordertransaction AS po_id FROM InboundShipmentItem WHERE inboundshipment = ?',
             params: [params.idInboundShipment]
         }).asMappedResults()
 
-        var poIds = poResults.map(function(r) { return r.purchaseordertransaction })
+        var poIds = poResults.map(function(r) { return r.po_id })
         log.debug('PO IDs', JSON.stringify(poIds))
 
-        // cari Item Receipt terbaru yang createdfrom PO yang linked ke inbound shipment ini
-        var grMap = {}
+        // cari Item Receipt dari PO yang linked ke inbound shipment ini
+        // N/search pakai createdfrom filter — reliable untuk GR yang sudah ada
+        // (delay indexing hanya terjadi untuk GR yang baru dibuat di request yang sama)
+        var grList = []
         if (poIds.length > 0) {
             try {
                 search.create({
@@ -136,15 +146,20 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                     filters: [
                         ['createdfrom', 'anyof', poIds]
                     ],
-                    columns: ['internalid', 'tranid', 'datecreated']
+                    columns: [
+                        search.createColumn({ name: 'internalid' }),
+                        search.createColumn({ name: 'tranid' }),
+                        search.createColumn({ name: 'trandate' }),
+                        search.createColumn({ name: 'createdfrom' })
+                    ]
                 }).run().each(function(result) {
-                    if (!grMap[result.id]) {
-                        grMap[result.id] = {
-                            id: result.id,
-                            tranid: result.getValue('tranid'),
-                            datecreated: result.getValue('datecreated')
-                        }
-                    }
+                    grList.push({
+                        id: result.id,
+                        tranid: result.getValue('tranid'),
+                        trandate: result.getValue('trandate'),
+                        po_id: result.getValue('createdfrom'),
+                        po_number: result.getText('createdfrom')
+                    })
                     return true
                 })
             } catch (e) {
@@ -152,15 +167,11 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             }
         }
 
-        // ambil GR dengan ID tertinggi = yang paling baru dibuat
-        var allGRs = Object.values(grMap)
-        var latestGR = allGRs.sort(function(a, b) { return parseInt(b.id) - parseInt(a.id) })[0]
-        var grList = latestGR ? [latestGR] : []
-
         log.debug('GR list', JSON.stringify(grList))
 
         return {
             inboundShipmentId: savedId,
+            inboundShipmentStatus: shipmentStatus,
             goodsReceipts: grList
         }
     }
@@ -172,6 +183,7 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             return {
                 success: true,
                 inbound_shipment_id: result.inboundShipmentId,
+                inbound_shipment_status: result.inboundShipmentStatus,
                 goods_receipts: result.goodsReceipts
             }
         } catch (e) {
