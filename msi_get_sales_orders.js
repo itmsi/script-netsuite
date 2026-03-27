@@ -48,9 +48,19 @@ define(['N/search', 'N/query'], (search, query) => {
      * Available sort_by:
      *   trandate, tranid, entity, status, id
      *
-     * Status codes (nilai aktual dari N/search):
-        pendingApproval             : 'SalesOrd:A',
-        pendingFulfillment          : 'SalesOrd:B'
+     * =============================================
+     * STATUS CODES
+     * status_code | status_name
+     * ------------|-----------------------------
+      A           | Pending Approval
+      B           | Pending Fulfillment
+      C           | Cancelled
+      D           | Partially Fulfilled
+      E           | Pending Billing/Part Fulfilled
+      F           | Pending Billing
+      G           | Fully Billed
+      H           | Closed
+     * =============================================
      */
     const post = (body) => {
 
@@ -76,17 +86,27 @@ define(['N/search', 'N/query'], (search, query) => {
                 searchFilters.push('AND', ['internalid', 'anyof', ids]);
             }
 
-            // Filter: status — terima format "pendingFulfillment" ATAU "SalesOrd:B"
+            // Filter: status — terima format "pendingFulfillment", "SalesOrd:B", atau huruf "B"
             if (filters.status) {
                 const statusMap = {
-                    pendingApproval             : 'SalesOrd:A',
-                    pendingFulfillment          : 'SalesOrd:B',
-                    cancelled                   : 'SalesOrd:C',
-                    partiallyFulfilled          : 'SalesOrd:D',
-                    pendingBillingPartFulfilled  : 'SalesOrd:E',
-                    pendingBilling              : 'SalesOrd:F',
-                    fullyBilled                 : 'SalesOrd:G',
-                    closed                      : 'SalesOrd:H'
+                    // camelCase
+                    pendingApproval            : 'SalesOrd:A',
+                    pendingFulfillment         : 'SalesOrd:B',
+                    cancelled                  : 'SalesOrd:C',
+                    partiallyFulfilled         : 'SalesOrd:D',
+                    pendingBillingPartFulfilled : 'SalesOrd:E',
+                    pendingBilling             : 'SalesOrd:F',
+                    fullyBilled                : 'SalesOrd:G',
+                    closed                     : 'SalesOrd:H',
+                    // huruf (status_code dari response)
+                    A : 'SalesOrd:A',
+                    B : 'SalesOrd:B',
+                    C : 'SalesOrd:C',
+                    D : 'SalesOrd:D',
+                    E : 'SalesOrd:E',
+                    F : 'SalesOrd:F',
+                    G : 'SalesOrd:G',
+                    H : 'SalesOrd:H'
                 };
                 const raw      = Array.isArray(filters.status) ? filters.status : [filters.status];
                 const statuses = raw.map(s => statusMap[s] || s); // fallback: pakai as-is
@@ -162,12 +182,24 @@ define(['N/search', 'N/query'], (search, query) => {
 
             const pageResult = pagedData.fetch({ index: pageIndex });
 
+            // reverse map: camelCase dari N/search getValue → huruf status code
+            const reverseStatusMap = {
+                pendingApproval            : 'A',
+                pendingFulfillment         : 'B',
+                cancelled                  : 'C',
+                partiallyFulfilled         : 'D',
+                pendingBillingPartFulfilled : 'E',
+                pendingBilling             : 'F',
+                fullyBilled                : 'G',
+                closed                     : 'H'
+            };
+
             // ── Build header data ─────────────────────────────────────────────
             const headers = pageResult.data.map(r => ({
                 id            : String(r.id),
                 tranid        : r.getValue('tranid')                       || null,
                 tran_date     : formatToISO(r.getValue('trandate'))        || null,
-                status_code   : r.getValue('status')                       || null,
+                status_code   : reverseStatusMap[r.getValue('status')] || r.getValue('status') || null,
                 status_name   : r.getText('status')                        || null,
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
                 customer_name : r.getText('entity')                        || null,

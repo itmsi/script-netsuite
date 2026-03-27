@@ -14,6 +14,19 @@
      "lastmodified": "2026-12-16T23:59:00"
    }
  }
+ *
+ * =============================================
+ * STATUS CODES
+ * status_code | status_name
+ * ------------|------------------------------------------
+ A           | Vendor Return Authorization : Pending Approval
+ B           | Vendor Return Authorization : Open
+ C           | Vendor Return Authorization : Cancelled
+ D           | Vendor Return Authorization : Rejected
+ E           | Vendor Return Authorization : Partially Applied
+ F           | Vendor Return Authorization : Pending Credit
+ G           | Vendor Return Authorization : Credited
+ * =============================================
  */
 define(['N/query', 'N/log'], function (query, log) {
 

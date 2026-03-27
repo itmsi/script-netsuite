@@ -79,6 +79,7 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         }
 
         // loop item dari payload
+        var itemChecked = 0
         for (var x = 0; x < params.items.length; x++) {
             var itemData = params.items[x]
 
@@ -114,9 +115,17 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 value: qty
             })
             log.debug('set qty item ' + itemData.item, qty)
+            itemChecked++
         }
 
-        var savedId = loadRec.save()
+        // kalau tidak ada item yang valid, skip save — langsung query existing GRs
+        var savedId = params.idInboundShipment
+        if (itemChecked > 0) {
+            savedId = loadRec.save()
+            log.debug('saved receive inbound', savedId)
+        } else {
+            log.debug('no items checked, skip save', params.idInboundShipment)
+        }
 
         // ambil status inbound shipment terbaru dari DB
         var shipmentInfo = query.runSuiteQL({
@@ -141,6 +150,7 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         var grList = []
         if (poIds.length > 0) {
             try {
+                var grMap = {}
                 search.create({
                     type: 'itemreceipt',
                     filters: [
@@ -153,15 +163,18 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                         search.createColumn({ name: 'createdfrom' })
                     ]
                 }).run().each(function(result) {
-                    grList.push({
-                        id: result.id,
-                        tranid: result.getValue('tranid'),
-                        trandate: result.getValue('trandate'),
-                        po_id: result.getValue('createdfrom'),
-                        po_number: result.getText('createdfrom')
-                    })
+                    if (!grMap[result.id]) {
+                        grMap[result.id] = {
+                            id: result.id,
+                            tranid: result.getValue('tranid'),
+                            trandate: result.getValue('trandate'),
+                            po_id: result.getValue('createdfrom'),
+                            po_number: result.getText('createdfrom')
+                        }
+                    }
                     return true
                 })
+                grList = Object.values(grMap)
             } catch (e) {
                 log.error('error search GR', e.message)
             }

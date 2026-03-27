@@ -6,12 +6,12 @@
  *
  * POST body:
  {
-   "return_authorization_id": 123,
+   "return_authorization_id": 4971,
    "items": [
      {
        "line"    : 1,
-       "quantity": 2,
-       "serials" : [101, 102]
+       "quantity": 1,
+       "serials" : [855]
      }
    ]
  }
