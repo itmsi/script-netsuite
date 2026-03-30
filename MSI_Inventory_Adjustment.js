@@ -5,33 +5,35 @@
  * Membuat Inventory Adjustment menggunakan ME - Inventory Adjustment Form
  *
  * POST body:
- * {
- *   "subsidiary": 1,                   // Internal ID Subsidiary (wajib)
- *   "account": 123,                    // Internal ID Adjustment Account (wajib)
- *   "adj_location": 5,                 // Internal ID Adjustment Location - header (wajib)
- *   "department": 10,                  // Internal ID Department (wajib)
- *   "class"     : 3,                   // Internal ID Class / Classification (wajib jika form mewajibkan)
- *   "trandate": "2026-03-13",          // Tanggal transaksi (opsional, default: hari ini)
- *   "posting_period": 20,              // Internal ID Posting Period (opsional)
- *   "memo": "Penyesuaian stok",        // Memo header (opsional)
- *   "customer": 11,                    // Internal ID Customer / ME-Customer (opsional)
- *   "me_po_number": "PO-2026-001",     // ME - Purchase Order Number header (opsional)
- *   "customform": 123,                  // Internal ID Custom Form (opsional, cek di Setup > Customization > Transaction Forms)
- *   "lines": [                         // Array item yang akan disesuaikan (wajib, minimal 1)
- *     {
- *       "item": 456,                   // Internal ID item (wajib)
- *       "location": 5,                 // Internal ID lokasi per baris (wajib)
- *       "quantity": 10,               // Qty penyesuaian: positif=tambah, negatif=kurang (wajib jika tidak pakai serials)
- *       "unit_cost": 150000,           // Proposed Unit Cost (opsional)
- *       "department": 10,              // Department per baris (opsional, override header)
- *       "class"     : 3,              // Class per baris (opsional, override header)
- *       "me_description": "Keterangan",// ME \ Description per baris (opsional)
- *       "po_number_line": "PO-001",    // Purchase Number (Line) (opsional)
- *       "memo": "Catatan baris",       // Memo per baris (opsional)
- *       "serials": ["SN001", "SN002"]  // Serial numbers (opsional, untuk item serialized)
- *     }
- *   ]
- * }
+ {
+   "ccustomform": 112,
+   "subsidiary": 1,                   // Internal ID Subsidiary (wajib)
+   "account": 128,                    // Internal ID Adjustment Account (wajib)
+   "department": 103,                  // Internal ID Department (wajib)
+   "class"     : 3,                   // Internal ID Class / Classification (wajib jika form mewajibkan)
+   "adjlocation": 214,                 // Internal ID Adjustment Location - header (wajib)
+//    "trandate": "30-03-2026",          // Tanggal transaksi (opsional, default: hari ini)
+//    "postingperiod": 24,              // Internal ID Posting Period (opsional)
+   "memo": "Penyesuaian stok",        // Memo header (opsional)
+   "customer": 38,                    // Internal ID Customer (opsional)
+   "custbody_me_description": "Keterangan header",          // ME - Description header (opsional)
+   "custbody_me_inv_customer": 38,                    // Internal ID Customer / ME-Customer (opsional)
+   "custbody_me_purchase_order_number": 5278,     // ME - Purchase Order Number header (opsional)
+//    "custbody_msi_cycle_count_cumber": 5278,  // MSI Cycle Count Number (opsional)
+   "lines": [                         // Array item yang akan disesuaikan (wajib, minimal 1)
+     {
+       "item": 26612,                   // Internal ID item (wajib)
+       "location": 214,                 // Internal ID lokasi ppostingperioder baris (wajib)
+       "quantity": 10,               // Qty penyesuaian: positif=tambah, negatif=kurang (wajib jika tidak pakai serials)
+       "unit_cost": 150000,           // Proposed Unit Cost (opsional)
+       "department": 103,              // Department per baris (opsional, override header)
+       "class"     : 3,              // Class per baris (opsional, override header)
+    //    "po_number_line": "PO-001",    // Purchase Number (Line) (opsional)
+       "memo": "Catatan baris",       // Memo per baris (opsional)
+       "serials": ["SN001", "SN002"]  // Serial numbers (opsional, untuk item serialized)
+     }
+   ]
+ }
  */
 
 define(['N/record', 'N/format'], (record, format) => {
@@ -47,8 +49,8 @@ define(['N/record', 'N/format'], (record, format) => {
             if (!body.account) {
                 return { status: 'error', message: '"account" (Adjustment Account) wajib diisi' };
             }
-            if (!body.adj_location) {
-                return { status: 'error', message: '"adj_location" (Adjustment Location) wajib diisi' };
+            if (!body.adjlocation) {
+                return { status: 'error', message: '"adjlocation" (Adjustment Location) wajib diisi' };
             }
             if (!body.department) {
                 return { status: 'error', message: '"department" wajib diisi' };
@@ -73,34 +75,49 @@ define(['N/record', 'N/format'], (record, format) => {
             }
             invAdj.setValue({ fieldId: 'subsidiary',   value: body.subsidiary });
             invAdj.setValue({ fieldId: 'account',      value: body.account });
-            invAdj.setValue({ fieldId: 'adjlocation',  value: body.adj_location });
+            invAdj.setValue({ fieldId: 'adjlocation',  value: body.adjlocation });
             invAdj.setValue({ fieldId: 'department',   value: body.department });
             invAdj.setValue({ fieldId: 'class',        value: body.class });
 
             if (body.trandate) {
-                let parsedDate = format.parse({
-                    value: body.trandate,
-                    type:  format.Type.DATE
-                });
+                // Parse ISO date string "YYYY-MM-DD" langsung ke JS Date
+                // (format.parse() mengharapkan format locale D/M/YYYY, bukan ISO)
+                const [year, month, day] = body.trandate.split('-').map(Number);
+                const parsedDate = new Date(year, month - 1, day);
                 invAdj.setValue({ fieldId: 'trandate', value: parsedDate });
             }
 
-            if (body.posting_period) {
-                invAdj.setValue({ fieldId: 'postingperiod', value: body.posting_period });
+            if (body.postingperiod) {
+                invAdj.setValue({ fieldId: 'postingperiod', value: body.postingperiod });
             }
 
             if (body.memo !== undefined) {
                 invAdj.setValue({ fieldId: 'memo', value: body.memo });
             }
 
-            // Custom header: ME - Customer
+            // Customer
             if (body.customer) {
-                invAdj.setValue({ fieldId: 'custbody_me_customer', value: body.customer });
+                invAdj.setValue({ fieldId: 'customer', value: body.customer });
+            }
+
+            // Custom header: ME - Customer
+            if (body.custbody_me_inv_customer) {
+                invAdj.setValue({ fieldId: 'custbody_me_inv_customer', value: body.custbody_me_inv_customer });
             }
 
             // Custom header: ME - Purchase Order Number
-            if (body.me_po_number !== undefined) {
-                invAdj.setValue({ fieldId: 'custbody_me_po_number', value: body.me_po_number });
+            if (body.custbody_me_purchase_order_number !== undefined) {
+                invAdj.setValue({ fieldId: 'custbody_me_purchase_order_number', value: body.custbody_me_purchase_order_number });
+            }
+
+            // Custom header: ME - Description
+            if (body.custbody_me_description !== undefined) {
+                invAdj.setValue({ fieldId: 'custbody_me_description', value: body.custbody_me_description });
+            }
+
+            // Custom header: MSI Cycle Count Number
+            if (body.custbody_msi_cycle_count_cumber !== undefined) {
+                invAdj.setValue({ fieldId: 'custbody_msi_cycle_count_cumber', value: body.custbody_msi_cycle_count_cumber });
             }
 
             // ── Proses setiap baris ───────────────────────────────────────────
