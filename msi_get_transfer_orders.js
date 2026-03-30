@@ -2,6 +2,14 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  */
+
+ // =========================
+ // 📋 TRANSFER ORDER STATUS CODES
+ // =========================
+ // B → Transfer Order : Pending Fulfillment
+ // F → Transfer Order : Pending Receipt
+ // G → Transfer Order : Received
+            
 define(['N/query', 'N/log'], function (query, log) {
 
     function post(context) {
