@@ -28,7 +28,7 @@
        "unit_cost": 150000,           // Proposed Unit Cost (opsional)
        "department": 103,              // Department per baris (opsional, override header)
        "class"     : 3,              // Class per baris (opsional, override header)
-    //    "po_number_line": "PO-001",    // Purchase Number (Line) (opsional)
+    //    "custcol_me_purchase_number_line": "PO-001",    // Purchase Number (Line) (opsional)
        "memo": "Catatan baris",       // Memo per baris (opsional)
        "serials": ["SN001", "SN002"]  // Serial numbers (opsional, untuk item serialized)
      }
@@ -117,7 +117,7 @@ define(['N/record', 'N/format'], (record, format) => {
 
             // Custom header: MSI Cycle Count Number
             if (body.custbody_msi_cycle_count_cumber !== undefined) {
-                invAdj.setValue({ fieldId: 'custbody_msi_cycle_count_cumber', value: body.custbody_msi_cycle_count_cumber });
+                invAdj.setText({ fieldId: 'custbody_msi_cycle_count_cumber', text: String(body.custbody_msi_cycle_count_cumber) });
             }
 
             // ── Proses setiap baris ───────────────────────────────────────────
@@ -194,11 +194,11 @@ define(['N/record', 'N/format'], (record, format) => {
                 }
 
                 // Custom kolom: Purchase Number (Line)
-                if (lineData.po_number_line !== undefined) {
+                if (lineData.custcol_me_purchase_number_line !== undefined) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'custcol_me_po_number_line',
-                        value:     lineData.po_number_line
+                        fieldId:   'custcol_me_purchase_number_line',
+                        value:     lineData.custcol_me_purchase_number_line
                     });
                 }
 
