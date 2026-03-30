@@ -46,7 +46,6 @@ define(['N/record', 'N/log'], function (record, log) {
             });
 
             var lineCount = itemReceipt.getLineCount({ sublistId: 'item' });
-            log.debug('LINE COUNT', lineCount);
 
             var payloadItems = context.items || [];
             var hasValidLine = false;
@@ -175,7 +174,6 @@ define(['N/record', 'N/log'], function (record, log) {
             }
 
             var receiptId = itemReceipt.save();
-            log.debug('ITEM RECEIPT CREATED', receiptId);
 
             return {
                 status    : 'success',

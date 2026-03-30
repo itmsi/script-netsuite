@@ -7,7 +7,6 @@ define(['N/record','N/format'], function (record, format) {
     function post(context) {
 
         try {
-            log.debug('Payload', context);
             var po = record.create({
                 type: record.Type.PURCHASE_ORDER,
                 isDynamic: true

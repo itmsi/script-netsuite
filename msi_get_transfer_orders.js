@@ -74,8 +74,6 @@ define(['N/query', 'N/log'], function (query, log) {
                 OFFSET ${offset} ROWS FETCH NEXT ${pageSize} ROWS ONLY
             `;
 
-            log.debug('HEADER SQL', headerSql);
-
             var headerResult = query.runSuiteQL({
                 query: headerSql
             }).asMappedResults();

@@ -116,7 +116,6 @@ define(['N/query', 'N/log'], function (query, log) {
                 var nsDate = isoToNsDate(filters.lastmodified);
                 conditions.push("lastmodifieddate >= TO_DATE(?, 'MM/DD/YYYY')");
                 params.push(nsDate);
-                log.debug('LASTMODIFIED FILTER', nsDate);
             }
 
             var whereClause = conditions.length > 0
@@ -140,9 +139,6 @@ define(['N/query', 'N/log'], function (query, log) {
                 whereClause,
                 'ORDER BY ' + sortCol + ' ' + sortOrder
             ].join('\n');
-
-            log.debug('DATA SQL', dataSql);
-            log.debug('PARAMS', JSON.stringify(params));
 
             var rows = query.runSuiteQL({ query: dataSql, params: params }).asMappedResults();
 

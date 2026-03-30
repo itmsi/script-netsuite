@@ -52,7 +52,6 @@ define(['N/query', 'N/log'], function (query, log) {
 
             if (filters.lastmodified) {
                 var nsDate = isoToNsDate(filters.lastmodified);
-                log.debug('LASTMODIFIED FILTER', nsDate);
                 whereClauses.push("t.lastmodifieddate >= TO_DATE('" + nsDate + "', 'MM/DD/YYYY')");
             }
 
@@ -62,7 +61,6 @@ define(['N/query', 'N/log'], function (query, log) {
             // 🔥 COUNT QUERY
             // =========================
             var countSql = "SELECT COUNT(*) AS cnt FROM transaction t WHERE " + whereStr;
-            log.debug('COUNT SQL', countSql);
 
             var countResult = query.runSuiteQL({ query: countSql, params: [] });
             var totalRecords = 0;
@@ -113,8 +111,6 @@ define(['N/query', 'N/log'], function (query, log) {
                 "ORDER BY " + allowedSort[sortBy] + " " + sortDir,
                 "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY"
             ].join('\n');
-
-            log.debug('DATA SQL', dataSql);
 
             var dataResult = query.runSuiteQL({ query: dataSql, params: [] });
             var rows = dataResult.asMappedResults();

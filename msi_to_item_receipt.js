@@ -92,8 +92,6 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
             var linesToReceive = body.lines || [];
             var lineCount      = itemReceipt.getLineCount({ sublistId: 'item' });
 
-            log.debug('LINE COUNT', lineCount);
-
             // =========================
             // 🔥 DEFAULT: matikan semua baris dulu
             // =========================
@@ -220,8 +218,6 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
                 enableSourcing      : true,
                 ignoreMandatoryFields: false
             });
-
-            log.debug('ITEM RECEIPT CREATED', newId);
 
             return {
                 status              : 'success',

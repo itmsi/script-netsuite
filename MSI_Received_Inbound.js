@@ -88,10 +88,8 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 fieldId: 'item',
                 value: itemData.item
             })
-            log.debug('item ' + itemData.item + ' lineNumber', lineNumber)
 
             if (lineNumber === -1) {
-                log.debug('item not found', itemData.item)
                 continue
             }
 
@@ -114,7 +112,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 line: lineNumber,
                 value: qty
             })
-            log.debug('set qty item ' + itemData.item, qty)
             itemChecked++
         }
 
@@ -122,9 +119,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         var savedId = params.idInboundShipment
         if (itemChecked > 0) {
             savedId = loadRec.save()
-            log.debug('saved receive inbound', savedId)
-        } else {
-            log.debug('no items checked, skip save', params.idInboundShipment)
         }
 
         // ambil status inbound shipment terbaru dari DB
@@ -133,7 +127,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             params: [params.idInboundShipment]
         }).asMappedResults()
         var shipmentStatus = shipmentInfo.length > 0 ? shipmentInfo[0].shipmentstatus : null
-        log.debug('inbound shipment status', shipmentStatus)
 
         // step 1: ambil PO IDs dari InboundShipmentItem
         var poResults = query.runSuiteQL({
@@ -142,7 +135,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         }).asMappedResults()
 
         var poIds = poResults.map(function(r) { return r.po_id })
-        log.debug('PO IDs', JSON.stringify(poIds))
 
         // cari Item Receipt dari PO yang linked ke inbound shipment ini
         // N/search pakai createdfrom filter — reliable untuk GR yang sudah ada
@@ -180,8 +172,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             }
         }
 
-        log.debug('GR list', JSON.stringify(grList))
-
         return {
             inboundShipmentId: savedId,
             inboundShipmentStatus: shipmentStatus,
@@ -192,7 +182,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
     function post(params) {
         try {
             var result = receiptInbound(params)
-            log.debug('create receipt', JSON.stringify(result))
             return {
                 success: true,
                 inbound_shipment_id: result.inboundShipmentId,
@@ -200,7 +189,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 goods_receipts: result.goodsReceipts
             }
         } catch (e) {
-            log.error('error receiptInbound', e)
             return {
                 success: false,
                 message: e.message

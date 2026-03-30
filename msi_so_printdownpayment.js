@@ -32,7 +32,6 @@ define(['N/record', 'N/ui/serverWidget', 'N/url'],
                     });
 
                     // document.location = suiteletURL;
-                    // log.debug("suiteletURL", suiteletURL);
 
                     var printButton = currentForm.addButton({
                         id: 'custpage_print_down_payment',

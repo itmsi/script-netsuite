@@ -153,7 +153,6 @@ return true;
 ============================== */
 
 var renderer = render.create();
-log.debug("Data",soData);
 renderer.addCustomDataSource({
     format: render.DataSource.JSON,
     alias: "so",

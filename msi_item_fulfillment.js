@@ -44,8 +44,6 @@ define(['N/record', 'N/log'], function (record, log) {
                 sublistId: 'item'
             });
 
-            log.debug('LINE COUNT', lineCount);
-
             var hasValidLine = false;
 
             var payloadItems = context.items || [];
@@ -68,12 +66,6 @@ define(['N/record', 'N/log'], function (record, log) {
                 var needInvDetail = fulfillment.getCurrentSublistValue({
                     sublistId: 'item',
                     fieldId: 'inventorydetailreq'
-                });
-
-                log.debug('CHECK LINE', {
-                    line: i,
-                    qtyRemaining: qtyRemaining,
-                    needInvDetail: needInvDetail
                 });
 
                 if (qtyRemaining <= 0) {

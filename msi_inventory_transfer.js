@@ -290,8 +290,6 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
                 ignoreMandatoryFields: false
             });
 
-            log.debug('INVENTORY TRANSFER CREATED', newId);
-
             return {
                 status              : 'success',
                 message             : 'Inventory Transfer berhasil dibuat',
