@@ -38,28 +38,30 @@ define(['N/search'], (search) => {
     }
 
     function isoToNetSuiteDate(isoStr) {
-        if (!isoStr) return null;
+        if (!isoStr) 
+          return null;
 
-        // Parse ISO 8601 string
-        const d = new Date(isoStr); // ini sudah menghitung +07 dengan benar
+    // Parse ISO 8601 
+    const d = new Date(isoStr);
 
-        const day = d.getDate();
-        const month = d.getMonth() + 1;
-        const year = d.getFullYear();
+    // Ambil UTC lalu adjust ke WIB (+7)
+    let hour = d.getUTCHours() + 7;
+    const minute = d.getUTCMinutes();
 
-        let hour = d.getHours();
-        const minute = d.getMinutes();
+    // Handle overflow (misal >24)
+    if (hour >= 24) hour -= 24;
 
-        let ampm = "AM";
-        if (hour >= 12) {
-            ampm = "PM";
-            if (hour > 12) hour -= 12;
-        } else if (hour === 0) {
-            hour = 12; // 00:00 → 12 AM
-        }
+    const day = d.getUTCDate();
+    const month = d.getUTCMonth() + 1;
+    const year = d.getUTCFullYear();
 
-        return `${day}/${month}/${year} ${hour}:${String(minute).padStart(2, "0")} ${ampm}`;
+    let ampm = hour >= 12 ? 'PM' : 'AM';
+    let hour12 = hour % 12;
+    if (hour12 === 0) hour12 = 12;
+
+    return `${day}/${month}/${year} ${hour}:${String(minute).padStart(2, '0')} ${ampm}`;
     }
+
 
     function post(requestBody) {
 
@@ -67,21 +69,21 @@ define(['N/search'], (search) => {
         const pageIndex = parseInt(requestBody.pageIndex) || 0;
         const lastModified = isoToNetSuiteDate(requestBody.lastmodified) || null;
 
-        // Only active customers
-        let filters = [
-            ["isinactive", "is", "F"]
-        ];
+       // Base filter: active vendors only
+        let filters = [["isinactive", "is", "F"]];
 
+        // Add last modified filter
         if (lastModified) {
             filters = [
                 ["isinactive", "is", "F"],
                 "AND",
-                ["lastmodifieddate", "after", lastModified]
+                ["lastmodifieddate", "onorafter", lastModified]
             ];
         }
 
-        const customerSearch = search.create({
-            type: search.Type.CUSTOMER,
+        // Vendor search
+        const vendorSearch = search.create({
+            type: search.Type.VENDOR,
             filters: filters,
             columns: [
                 "internalid",
@@ -96,9 +98,8 @@ define(['N/search'], (search) => {
             ]
         });
 
-        const pagedData = customerSearch.runPaged({
-            pageSize: pageSize
-        });
+        // Paging
+        const pagedData = vendorSearch.runPaged({ pageSize });
 
         if (pageIndex >= pagedData.pageRanges.length) {
             return {
@@ -111,22 +112,24 @@ define(['N/search'], (search) => {
 
         const page = pagedData.fetch({ index: pageIndex });
 
+        // Map result
         const data = page.data.map(result => ({
             internalId: result.getValue("internalid"),
             entityId: result.getValue("entityid"),
             companyName: result.getValue("companyname"),
             email: result.getValue("email"),
             phone: result.getValue("phone"),
-            lastModifiedDate: formatToISO(result.getValue("lastmodifieddate"))
+            lastModifiedDate: formatToISO(result.getValue("lastmodifieddate")),
+            lastModifiedDateRaw: result.getValue("lastmodifieddate")
         }));
 
         return {
             success: true,
-            pageIndex: pageIndex,
-            pageSize: pageSize,
+            pageIndex,
+            pageSize,
             totalRows: pagedData.count,
             totalPages: pagedData.pageRanges.length,
-            data: data
+            data
         };
     }
 
