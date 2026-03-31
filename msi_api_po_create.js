@@ -7,6 +7,7 @@ define(['N/record','N/format'], function (record, format) {
     function post(context) {
 
         try {
+            log.debug('Payload', context);
             var po = record.create({
                 type: record.Type.PURCHASE_ORDER,
                 isDynamic: true
@@ -176,43 +177,6 @@ define(['N/record','N/format'], function (record, format) {
             });
 
             var poId = po.save();
-            log.debug('PO ID', poId);
-            // ===== NOTES BEFORE SUBMIT =====
-            // 1. create note
-            var noteRec = record.create({
-                type: 'note',
-                isDynamic: true
-            });
-
-            noteRec.setValue({
-                fieldId: 'title',
-                value: context.noteTitle || 'API Note'
-            });
-
-            noteRec.setValue({
-                fieldId: 'note',
-                value: context.note
-            });
-
-            noteRec.setValue({
-                fieldId: 'transaction',
-                value: poId
-            });
-            var noteId = noteRec.save();
-
-            var poEdit = record.load({
-    type: record.Type.PURCHASE_ORDER,
-    id: poId,
-    isDynamic: true
-});
-
-// trigger field
-poEdit.setValue({
-    fieldId: 'memo',
-    value: 'update next'
-});
-
-poEdit.save();
             return {
                 success: true,
                 poId: poId
