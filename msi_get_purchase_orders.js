@@ -111,7 +111,19 @@ define(['N/query'], (query) => {
                     BUILTIN.DF(t.currency)              AS currency_symbol,
                     t.foreigntotal,
                     t.total,
-                    t.lastmodifieddate                  AS last_modified
+                    t.lastmodifieddate                  AS last_modified,
+                    t.approvalstatus,
+                    t.custbody_me_wf_created_by,
+                    t.custbody_me_wf_in_delegation,
+                    t.custbody_me_delegate_approver,
+                    t.custbody_msi_createdby_api,
+                    t.custbody_me_pr_date,
+                    t.custbody_me_project_location,
+                    t.custbody_me_pr_type,
+                    t.custbody_me_saving_type,
+                    t.custbody_me_pr_number,
+                    t.custbody_me_description,
+                    t.intercotransaction
                 FROM transaction t
                 ${whereClause}
                 ORDER BY ${sortBy} ${sortOrder}
@@ -186,6 +198,18 @@ define(['N/query'], (query) => {
                 foreigntotal: header.foreigntotal || 0,
                 total   : header.total || 0,
                 last_modified  : formatDate(header.last_modified) || null,
+                approvalstatus                    : header.approvalstatus || null,
+                custbody_me_wf_created_by         : header.custbody_me_wf_created_by || null,
+                custbody_me_wf_in_delegation      : header.custbody_me_wf_in_delegation || null,
+                custbody_me_delegate_approver     : header.custbody_me_delegate_approver || null,
+                custbody_msi_createdby_api        : header.custbody_msi_createdby_api || null,
+                custbody_me_pr_date               : formatDate(header.custbody_me_pr_date) || null,
+                custbody_me_project_location      : header.custbody_me_project_location || null,
+                custbody_me_pr_type               : header.custbody_me_pr_type || null,
+                custbody_me_saving_type           : header.custbody_me_saving_type || null,
+                custbody_me_pr_number             : header.custbody_me_pr_number || null,
+                custbody_me_description           : header.custbody_me_description || null,
+                intercotransaction                : header.intercotransaction || null,
                 lines          : linesByPo[String(header.po_id)] || []
             }));
 
