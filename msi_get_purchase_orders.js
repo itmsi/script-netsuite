@@ -126,8 +126,15 @@ define(['N/query'], (query) => {
                     t.intercotransaction,
                     t.terms,
                     t.duedate,
-                    t.otherrefnum
+                    t.otherrefnum,
+                    tlm.location,
+                    BUILTIN.DF(tlm.location)            AS location_display,
+                    tlm.subsidiary,
+                    BUILTIN.DF(tlm.subsidiary)          AS subsidiary_display
                 FROM transaction t
+                LEFT JOIN transactionline tlm
+                    ON tlm.transaction = t.id
+                   AND tlm.mainline = 'T'
                 ${whereClause}
                 ORDER BY ${sortBy} ${sortOrder}
             `;
@@ -231,6 +238,10 @@ define(['N/query'], (query) => {
                 terms                             : header.terms || null,
                 duedate                           : formatDate(header.duedate) || null,
                 otherrefnum                       : header.otherrefnum || null,
+                subsidiary                        : header.subsidiary || null,
+                subsidiary_display                : header.subsidiary_display || null,
+                location                          : header.location || null,
+                location_display                  : header.location_display || null,
                 lines          : linesByPo[String(header.po_id)] || []
             }));
 
