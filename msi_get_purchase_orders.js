@@ -123,7 +123,10 @@ define(['N/query'], (query) => {
                     t.custbody_me_saving_type,
                     t.custbody_me_pr_number,
                     t.custbody_me_description,
-                    t.intercotransaction
+                    t.intercotransaction,
+                    t.terms,
+                    t.duedate,
+                    t.otherrefnum
                 FROM transaction t
                 ${whereClause}
                 ORDER BY ${sortBy} ${sortOrder}
@@ -154,19 +157,34 @@ define(['N/query'], (query) => {
 
             let lineSql = `
                 SELECT
-                    tl.transaction                          AS po_id,
-                    tl.linesequencenumber                   AS line_number,
-                    tl.item                                 AS item_id,
-                    BUILTIN.DF(tl.item)                     AS item_name,
-                    tl.quantity                             AS quantity,
-                    tl.rate                                 AS unit_price,
-                    tl.memo                                 AS line_memo,
-                    tl.location                             AS location_id,
-                    BUILTIN.DF(tl.location)                 AS location_name,
-                    tl.department                           AS department_id,
-                    BUILTIN.DF(tl.department)               AS department_name,
-                    tl.subsidiary                           AS subsidiary_id,
-                    BUILTIN.DF(tl.subsidiary)               AS subsidiary_name
+                    tl.transaction,
+                    tl.linesequencenumber,
+                    tl.item,
+                    BUILTIN.DF(tl.item)                             AS item_display,
+                    tl.itemtype,
+                    tl.quantity,
+                    tl.quantitybilled,
+                    tl.rate,
+                    tl.netamount,
+                    tl.tax1amt,
+                    (ABS(tl.netamount) + ABS(NVL(tl.tax1amt, 0)))  AS grossamt,
+                    tl.taxcode,
+                    BUILTIN.DF(tl.taxcode)                          AS taxcode_display,
+                    tl.taxrate1,
+                    tl.memo,
+                    tl.location,
+                    BUILTIN.DF(tl.location)                         AS location_display,
+                    tl.department,
+                    BUILTIN.DF(tl.department)                       AS department_display,
+                    tl.class,
+                    BUILTIN.DF(tl.class)                            AS class_display,
+                    tl.units,
+                    BUILTIN.DF(tl.units)                            AS units_display,
+                    tl.isbillable,
+                    tl.isclosed,
+                    tl.matchbilltoreceipt,
+                    tl.expectedreceiptdate,
+                    tl.custcol_4601_witaxapplies
                 FROM transactionline tl
                 WHERE tl.transaction IN (${linePlaceholders})
                   AND tl.mainline    = 'F'
@@ -179,7 +197,7 @@ define(['N/query'], (query) => {
             // ── Gabungkan header + lines ───────────────────────────────────────
             let linesByPo = {};
             lineResults.forEach(line => {
-                let key = String(line.po_id);
+                let key = String(line.transaction);
                 if (!linesByPo[key]) linesByPo[key] = [];
                 linesByPo[key].push(line);
             });
@@ -210,6 +228,9 @@ define(['N/query'], (query) => {
                 custbody_me_pr_number             : header.custbody_me_pr_number || null,
                 custbody_me_description           : header.custbody_me_description || null,
                 intercotransaction                : header.intercotransaction || null,
+                terms                             : header.terms || null,
+                duedate                           : formatDate(header.duedate) || null,
+                otherrefnum                       : header.otherrefnum || null,
                 lines          : linesByPo[String(header.po_id)] || []
             }));
 
