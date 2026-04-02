@@ -28,7 +28,7 @@
  * }
  */
 
-define(['N/query'], (query) => {
+define(['N/query', 'N/search'], (query, search) => {
 
     // Format tanggal SuiteQL ("M/D/YYYY" atau "YYYY-MM-DD") ke ISO 8601
     const formatDate = (val) => {
@@ -162,6 +162,51 @@ define(['N/query'], (query) => {
             let foundPoIds       = pagedHeaders.map(h => h.po_id);
             let linePlaceholders = foundPoIds.map(() => '?').join(', ');
 
+            // ── Fetch custom fields via search.create (Type.TRANSACTION) ────────
+            // Menggunakan N/search pada level TRANSACTION terbukti bisa menembus  
+            // custom body fields yang tidak dirender/diekspos oleh SuiteQL
+            if (foundPoIds.length > 0) {
+                let customFieldsSearch = search.create({
+                    type: search.Type.TRANSACTION,
+                    filters: [
+                        ['internalid', 'anyof', foundPoIds],
+                        'AND', 
+                        ['mainline', 'is', 'T']
+                    ],
+                    columns: [
+                        search.createColumn({ name: 'custbody_me_wf_next_approver_blank' }),
+                        search.createColumn({ name: 'customform' }),
+                        search.createColumn({ name: 'nextapprover' })
+                    ]
+                });
+                
+                try {
+                    let searchResults = customFieldsSearch.run().getRange({ start: 0, end: 1000 });
+                    let customMap = {};
+                    
+                    searchResults.forEach(res => {
+                        customMap[res.id] = {
+                            custbody_me_wf_next_approver_blank: res.getValue('custbody_me_wf_next_approver_blank'),
+                            custbody_me_wf_next_approver_blank_display: res.getText('custbody_me_wf_next_approver_blank'),
+                            customform: res.getValue('customform'),
+                            customform_display: res.getText('customform')
+                        };
+                    });
+                    
+                    pagedHeaders.forEach(h => {
+                        let m = customMap[String(h.po_id)];
+                        if (m) {
+                            h.custbody_me_wf_next_approver_blank = m.custbody_me_wf_next_approver_blank || null;
+                            h.custbody_me_wf_next_approver_blank_display = m.custbody_me_wf_next_approver_blank_display || null;
+                            h.customform = m.customform || null;
+                            h.customform_display = m.customform_display || null;
+                        }
+                    });
+                } catch (e) {
+                    log.debug('Search Fallback Error', e.message);
+                }
+            }
+
             let lineSql = `
                 SELECT
                     tl.transaction,
@@ -227,6 +272,10 @@ define(['N/query'], (query) => {
                 custbody_me_wf_created_by         : header.custbody_me_wf_created_by || null,
                 custbody_me_wf_in_delegation      : header.custbody_me_wf_in_delegation || null,
                 custbody_me_delegate_approver     : header.custbody_me_delegate_approver || null,
+                custbody_me_wf_next_approver_blank: header.custbody_me_wf_next_approver_blank || null,
+                custbody_me_wf_next_approver_blank_display: header.custbody_me_wf_next_approver_blank_display || null,
+                customform                        : header.customform || null,
+                customform_display                : header.customform_display || null,
                 custbody_msi_createdby_api        : header.custbody_msi_createdby_api || null,
                 custbody_me_pr_date               : formatDate(header.custbody_me_pr_date) || null,
                 custbody_me_project_location      : header.custbody_me_project_location || null,
