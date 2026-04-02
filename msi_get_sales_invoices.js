@@ -172,6 +172,7 @@ define(['N/search', 'N/query'], function (search, query) {
                     custbody_me_wf_next_approver_blank : r.getValue('custbody_me_wf_next_approver_blank') || null,
                     saleseffectivedate                 : r.getValue('saleseffectivedate'),
                     createdfrom                        : r.getValue('createdfrom') || null,
+                    createdfrom_display                : r.getText('createdfrom') || null,
                     subsidiary                         : r.getValue('subsidiary') || null,
                     subsidiary_display                 : r.getText('subsidiary') || null,
                     department                         : r.getValue('department') || null,
