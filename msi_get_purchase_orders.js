@@ -100,8 +100,8 @@ define(['N/search', 'N/log'], (search, log) => {
                     'custbody_me_project_location', 'custbody_me_pr_type',
                     'custbody_me_saving_type', 'custbody_me_pr_number',
                     'custbody_me_description', 'intercotransaction', 'terms',
-                    'duedate', 'otherrefnum', 'custbody_me_wf_next_approver_blank',
-                    'customform', 'nextapprover'
+                    'duedate', 'otherrefnum', 'customform', 
+                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' })
                 ]
             });
 
@@ -160,10 +160,9 @@ define(['N/search', 'N/log'], (search, log) => {
                     subsidiary_display:                res.getText('subsidiary'),
                     location:                          res.getValue('location'),
                     location_display:                  res.getText('location'),
-                    custbody_me_wf_next_approver_blank: res.getValue('custbody_me_wf_next_approver_blank'),
-                    custbody_me_wf_next_approver_blank_display: res.getText('custbody_me_wf_next_approver_blank'),
                     customform:                        res.getValue('customform'),
-                    customform_display:                res.getText('customform')
+                    customform_display:                res.getText('customform'),
+                    nextapprover:                      res.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' })
                 });
             });
 
@@ -192,9 +191,6 @@ define(['N/search', 'N/log'], (search, log) => {
                 lineSearch.run().each(res => {
                     let poId = res.getValue('internalid');
                     if (!linesByPo[poId]) linesByPo[poId] = [];
-                    
-                    let netAmount = Number(res.getValue('amount')) || 0;
-                    let taxAmount = Number(res.getValue('taxamount')) || 0;
 
                     linesByPo[poId].push({
                         transaction:        poId,
@@ -205,9 +201,9 @@ define(['N/search', 'N/log'], (search, log) => {
                         quantity:           res.getValue('quantity'),
                         quantitybilled:     res.getValue('quantitybilled'),
                         rate:               res.getValue('rate'),
-                        netamount:          netAmount,
-                        tax1amt:            taxAmount,
-                        grossamt:           Math.abs(netAmount) + Math.abs(taxAmount),
+                        netamount:          res.getValue('amount'),
+                        tax1amt:            res.getValue('taxamount'),
+                        grossamt:           Math.abs(res.getValue('amount')) + Math.abs(res.getValue('taxamount')),
                         taxcode:            res.getValue('taxcode'),
                         taxcode_display:    res.getText('taxcode'),
                         taxrate1:           res.getValue('taxrate'),
