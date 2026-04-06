@@ -2,18 +2,18 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  *
- * GET data Purchase Order (header + lines) dengan pagination & filters
+ * GET data Purchase Order (header + lines) dengan pagination & filters menggunakan N/search
  *
  * POST body:
 {
   "page":       1,               // Halaman (default: 1)
   "page_size":  20,              // Jumlah data per halaman (default: 20)
-  "sort_by":    "t.id",          // Field untuk sorting (default: "t.id")
+  "sort_by":    "internalid",    // Field untuk sorting (default: "internalid")
   "sort_order": "DESC",          // ASC / DESC (default: "DESC")
   "filters": {
     "po_ids":    [5157, 5158],   // Filter by ID (opsional)
     "po_number": "PO-2026-001",  // Filter by nomor PO (opsional)
-    "status":"PurchOrd:F",           // Filter status PO (opsional) — gunakan kode huruf:
+    "status":"PurchOrd:F",       // Filter status PO (opsional) — gunakan kode huruf:
                                  //   PurchOrd:A = Pending Supervisor Approval
                                  //   PurchOrd:B = Pending Receipt
                                  //   PurchOrd:C = Partially Received
@@ -25,24 +25,10 @@
     "lastmodified": "2026-03-31T23:59:00+07:00", // Filter tanggal diubah (opsional)
     "vendor_id": 10              // Filter by vendor ID (opsional)
   }
- * }
+}
  */
 
-define(['N/query', 'N/search'], (query, search) => {
-
-    // Format tanggal SuiteQL ("M/D/YYYY" atau "YYYY-MM-DD") ke ISO 8601
-    const formatDate = (val) => {
-        if (!val) return null;
-        // Jika sudah YYYY-MM-DD
-        if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val + 'T00:00:00+07:00';
-        // Format M/D/YYYY
-        const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (m) {
-            const pad = n => String(n).padStart(2, '0');
-            return `${m[3]}-${pad(m[2])}-${pad(m[1])}T00:00:00+07:00`;
-        }
-        return val;
-    };
+define(['N/search', 'N/log'], (search, log) => {
 
     const post = (body) => {
 
@@ -52,102 +38,79 @@ define(['N/query', 'N/search'], (query, search) => {
 
             let page      = body.page      || 1;
             let pageSize  = body.page_size || 20;
-            let offset    = (page - 1) * pageSize;
-            let sortBy    = body.sort_by    || 't.id';
-            let sortOrder = (body.sort_order || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+            let sortBy    = body.sort_by    || 'internalid';
+            let sortOrder = (body.sort_order || 'DESC').toUpperCase() === 'ASC' ? false : true; // DESC is default (true)
 
-            let filters   = body.filters || {};
+            // Mapping sort_by suiteql to search column
+            const sortMap = {
+                't.id': 'internalid',
+                'po_id': 'internalid',
+                't.tranid': 'tranid',
+                'po_number': 'tranid',
+                't.trandate': 'trandate',
+                'po_date': 'trandate',
+                't.lastmodifieddate': 'lastmodifieddate',
+                'last_modified': 'lastmodifieddate'
+            };
+            let searchSortBy = sortMap[sortBy] || sortBy.replace(/^t\./, '');
 
-            // ── Bangun klausa WHERE dinamis ───────────────────────────────────
-            let conditions = [`t.type = 'PurchOrd'`];
-            let params     = [];
+            let filtersBody = body.filters || {};
 
-            if (filters.po_ids && Array.isArray(filters.po_ids) && filters.po_ids.length > 0) {
-                let ids = filters.po_ids.map(id => parseInt(id)).filter(id => !isNaN(id));
-                let placeholders = ids.map(() => '?').join(', ');
-                conditions.push(`t.id IN (${placeholders})`);
-                params.push(...ids);
+            // ── Bangun filter search ──────────────────────────────────────────
+            let searchFilters = [
+                ['mainline', 'is', 'T'],
+                'AND',
+                ['type', 'anyof', 'PurchOrd']
+            ];
+
+            if (filtersBody.po_ids && Array.isArray(filtersBody.po_ids) && filtersBody.po_ids.length > 0) {
+                searchFilters.push('AND', ['internalid', 'anyof', filtersBody.po_ids]);
             }
 
-            if (filters.po_number) {
-                conditions.push(`t.tranid = ?`);
-                params.push(filters.po_number);
+            if (filtersBody.po_number) {
+                searchFilters.push('AND', ['numbertext', 'is', filtersBody.po_number]);
             }
 
-            if (filters.status) {
-                // SuiteQL menyimpan status sebagai "PurchOrd:F" — tambahkan prefix jika belum ada
-                const rawStatus = filters.status;
-                const status = rawStatus.startsWith('PurchOrd:') ? rawStatus : `PurchOrd:${rawStatus}`;
-                conditions.push(`t.status = ?`);
-                params.push(status);
+            if (filtersBody.status) {
+                const status = filtersBody.status.startsWith('PurchOrd:') ? filtersBody.status : `PurchOrd:${filtersBody.status}`;
+                searchFilters.push('AND', ['status', 'anyof', status]);
             }
 
-            if (filters.lastmodified) {
-                // Strip timezone +07:00 / T separator agar cocok dengan TO_DATE format
-                const raw = filters.lastmodified.replace('T', ' ').replace(/\+\d{2}:\d{2}$/, '').trim();
-                conditions.push(`t.lastmodifieddate >= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')`);
-                params.push(raw);
+            if (filtersBody.lastmodified) {
+                // Formatting date for search might vary, but ISO is usually accepted or needs M/D/YYYY
+                // For simplified "greater than", we often use 'after' or 'onorafter'
+                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', filtersBody.lastmodified]);
             }
 
-            if (filters.vendor_id) {
-                conditions.push(`t.entity = ?`);
-                params.push(parseInt(filters.vendor_id));
+            if (filtersBody.vendor_id) {
+                searchFilters.push('AND', ['vendor.internalid', 'anyof', filtersBody.vendor_id]);
             }
 
-            let whereClause = 'WHERE ' + conditions.join('\n                  AND ');
+            // ── Buat Search Header ─────────────────────────────────────────────
+            let headerSearch = search.create({
+                type: search.Type.PURCHASE_ORDER,
+                filters: searchFilters,
+                columns: [
+                    search.createColumn({ name: 'internalid', sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
+                    'tranid', 'trandate', 'status', 'memo', 'entity', 'currency',
+                    'amount', 'fxamount', 'lastmodifieddate', 'approvalstatus',
+                    'location', 'subsidiary', 'custbody_me_wf_created_by',
+                    'custbody_me_wf_in_delegation', 'custbody_me_delegate_approver',
+                    'custbody_msi_createdby_api', 'custbody_me_pr_date',
+                    'custbody_me_project_location', 'custbody_me_pr_type',
+                    'custbody_me_saving_type', 'custbody_me_pr_number',
+                    'custbody_me_description', 'intercotransaction', 'terms',
+                    'duedate', 'otherrefnum', 'custbody_me_wf_next_approver_blank',
+                    'customform', 'nextapprover'
+                ]
+            });
 
-            // ── Query Header PO ───────────────────────────────────────────────
-            let headerSql = `
-                SELECT
-                    t.id                                AS po_id,
-                    t.tranid                            AS po_number,
-                    t.trandate                          AS po_date,
-                    t.status                            AS po_status,
-                    BUILTIN.DF(t.status)                AS po_status_label,
-                    t.memo                              AS memo,
-                    t.entity                            AS vendor_id,
-                    BUILTIN.DF(t.entity)                AS vendor_name,
-                    t.currency                          AS currency_id,
-                    BUILTIN.DF(t.currency)              AS currency_symbol,
-                    t.foreigntotal,
-                    t.total,
-                    t.lastmodifieddate                  AS last_modified,
-                    t.approvalstatus,
-                    t.custbody_me_wf_created_by,
-                    t.custbody_me_wf_in_delegation,
-                    t.custbody_me_delegate_approver,
-                    t.custbody_msi_createdby_api,
-                    t.custbody_me_pr_date,
-                    t.custbody_me_project_location,
-                    t.custbody_me_pr_type,
-                    t.custbody_me_saving_type,
-                    t.custbody_me_pr_number,
-                    t.custbody_me_description,
-                    t.intercotransaction,
-                    t.terms,
-                    t.duedate,
-                    t.otherrefnum,
-                    tlm.location,
-                    BUILTIN.DF(tlm.location)            AS location_display,
-                    tlm.subsidiary,
-                    BUILTIN.DF(tlm.subsidiary)          AS subsidiary_display
-                FROM transaction t
-                LEFT JOIN transactionline tlm
-                    ON tlm.transaction = t.id
-                   AND tlm.mainline = 'T'
-                ${whereClause}
-                ORDER BY ${sortBy} ${sortOrder}
-            `;
+            // ── Eksekusi Search Berhalaman ────────────────────────────────────
+            let pagedData = headerSearch.runPaged({ pageSize: pageSize });
+            let totalRecords = pagedData.count;
+            let totalPages   = pagedData.pageRanges.length;
 
-            let allHeaders = query.runSuiteQL({ query: headerSql, params }).asMappedResults();
-
-            let totalRecords = allHeaders.length;
-            let totalPages   = Math.ceil(totalRecords / pageSize);
-
-            // Pagination di sisi aplikasi
-            let pagedHeaders = allHeaders.slice(offset, offset + pageSize);
-
-            if (pagedHeaders.length === 0) {
+            if (totalRecords === 0 || page > totalPages) {
                 return {
                     status:        'success',
                     page,
@@ -158,141 +121,120 @@ define(['N/query', 'N/search'], (query, search) => {
                 };
             }
 
-            // ── Query Lines PO (hanya untuk PO di halaman ini) ────────────────
-            let foundPoIds       = pagedHeaders.map(h => h.po_id);
-            let linePlaceholders = foundPoIds.map(() => '?').join(', ');
+            let searchPage = pagedData.fetch({ index: page - 1 });
+            let pagedHeaders = [];
+            let foundPoIds   = [];
 
-            // ── Fetch custom fields via search.create (Type.TRANSACTION) ────────
-            // Menggunakan N/search pada level TRANSACTION terbukti bisa menembus  
-            // custom body fields yang tidak dirender/diekspos oleh SuiteQL
-            if (foundPoIds.length > 0) {
-                let customFieldsSearch = search.create({
-                    type: search.Type.TRANSACTION,
-                    filters: [
-                        ['internalid', 'anyof', foundPoIds],
-                        'AND', 
-                        ['mainline', 'is', 'T']
-                    ],
-                    columns: [
-                        search.createColumn({ name: 'custbody_me_wf_next_approver_blank' }),
-                        search.createColumn({ name: 'customform' }),
-                        search.createColumn({ name: 'nextapprover' })
-                    ]
+            searchPage.data.forEach(res => {
+                foundPoIds.push(res.id);
+                pagedHeaders.push({
+                    po_id:                             res.id,
+                    po_number:                         res.getValue('tranid'),
+                    po_date:                           res.getValue('trandate'),
+                    po_status:                         res.getValue('status'),
+                    po_status_label:                   res.getText('status'),
+                    memo:                              res.getValue('memo'),
+                    vendor_id:                         res.getValue('entity'),
+                    vendor_name:                       res.getText('entity'),
+                    currency_id:                       res.getValue('currency'),
+                    currency_symbol:                   res.getText('currency'),
+                    foreigntotal:                      res.getValue('fxamount'),
+                    total:                             res.getValue('amount'),
+                    last_modified:                     res.getValue('lastmodifieddate'),
+                    approvalstatus:                    res.getValue('approvalstatus'),
+                    custbody_me_wf_created_by:         res.getValue('custbody_me_wf_created_by'),
+                    custbody_me_wf_in_delegation:      res.getValue('custbody_me_wf_in_delegation'),
+                    custbody_me_delegate_approver:     res.getValue('custbody_me_delegate_approver'),
+                    custbody_msi_createdby_api:        res.getValue('custbody_msi_createdby_api'),
+                    custbody_me_pr_date:               res.getValue('custbody_me_pr_date'),
+                    custbody_me_project_location:      res.getValue('custbody_me_project_location'),
+                    custbody_me_pr_type:               res.getValue('custbody_me_pr_type'),
+                    custbody_me_saving_type:           res.getValue('custbody_me_saving_type'),
+                    custbody_me_pr_number:             res.getValue('custbody_me_pr_number'),
+                    custbody_me_description:           res.getValue('custbody_me_description'),
+                    intercotransaction:                res.getValue('intercotransaction'),
+                    terms:                             res.getValue('terms'),
+                    duedate:                           res.getValue('duedate'),
+                    otherrefnum:                       res.getValue('otherrefnum'),
+                    subsidiary:                        res.getValue('subsidiary'),
+                    subsidiary_display:                res.getText('subsidiary'),
+                    location:                          res.getValue('location'),
+                    location_display:                  res.getText('location'),
+                    custbody_me_wf_next_approver_blank: res.getValue('custbody_me_wf_next_approver_blank'),
+                    custbody_me_wf_next_approver_blank_display: res.getText('custbody_me_wf_next_approver_blank'),
+                    customform:                        res.getValue('customform'),
+                    customform_display:                res.getText('customform')
                 });
-                
-                try {
-                    let searchResults = customFieldsSearch.run().getRange({ start: 0, end: 1000 });
-                    let customMap = {};
-                    
-                    searchResults.forEach(res => {
-                        customMap[res.id] = {
-                            custbody_me_wf_next_approver_blank: res.getValue('custbody_me_wf_next_approver_blank'),
-                            custbody_me_wf_next_approver_blank_display: res.getText('custbody_me_wf_next_approver_blank'),
-                            customform: res.getValue('customform'),
-                            customform_display: res.getText('customform')
-                        };
-                    });
-                    
-                    pagedHeaders.forEach(h => {
-                        let m = customMap[String(h.po_id)];
-                        if (m) {
-                            h.custbody_me_wf_next_approver_blank = m.custbody_me_wf_next_approver_blank || null;
-                            h.custbody_me_wf_next_approver_blank_display = m.custbody_me_wf_next_approver_blank_display || null;
-                            h.customform = m.customform || null;
-                            h.customform_display = m.customform_display || null;
-                        }
-                    });
-                } catch (e) {
-                    log.debug('Search Fallback Error', e.message);
-                }
-            }
-
-            let lineSql = `
-                SELECT
-                    tl.transaction,
-                    tl.linesequencenumber,
-                    tl.item,
-                    BUILTIN.DF(tl.item)                             AS item_display,
-                    tl.itemtype,
-                    tl.quantity,
-                    tl.quantitybilled,
-                    tl.rate,
-                    tl.netamount,
-                    tl.tax1amt,
-                    (ABS(tl.netamount) + ABS(NVL(tl.tax1amt, 0)))  AS grossamt,
-                    tl.taxcode,
-                    BUILTIN.DF(tl.taxcode)                          AS taxcode_display,
-                    tl.taxrate1,
-                    tl.memo,
-                    tl.location,
-                    BUILTIN.DF(tl.location)                         AS location_display,
-                    tl.department,
-                    BUILTIN.DF(tl.department)                       AS department_display,
-                    tl.class,
-                    BUILTIN.DF(tl.class)                            AS class_display,
-                    tl.units,
-                    BUILTIN.DF(tl.units)                            AS units_display,
-                    tl.isbillable,
-                    tl.isclosed,
-                    tl.matchbilltoreceipt,
-                    tl.expectedreceiptdate,
-                    tl.custcol_4601_witaxapplies
-                FROM transactionline tl
-                WHERE tl.transaction IN (${linePlaceholders})
-                  AND tl.mainline    = 'F'
-                  AND tl.itemtype   IS NOT NULL
-                ORDER BY tl.transaction, tl.linesequencenumber
-            `;
-
-            let lineResults = query.runSuiteQL({ query: lineSql, params: foundPoIds }).asMappedResults();
-
-            // ── Gabungkan header + lines ───────────────────────────────────────
-            let linesByPo = {};
-            lineResults.forEach(line => {
-                let key = String(line.transaction);
-                if (!linesByPo[key]) linesByPo[key] = [];
-                linesByPo[key].push(line);
             });
 
-            let data = pagedHeaders.map(header => ({
-                po_id          : String(header.po_id),
-                po_number      : header.po_number,
-                po_date        : formatDate(header.po_date),
-                po_status      : header.po_status,
-                po_status_label: header.po_status_label,
-                memo           : header.memo || null,
-                vendor_id      : header.vendor_id ? String(header.vendor_id) : null,
-                vendor_name    : header.vendor_name || null,
-                currency_id    : header.currency_id ? String(header.currency_id) : null,
-                currency_symbol: header.currency_symbol || null,
-                foreigntotal: header.foreigntotal || 0,
-                total   : header.total || 0,
-                last_modified  : formatDate(header.last_modified) || null,
-                approvalstatus                    : header.approvalstatus || null,
-                custbody_me_wf_created_by         : header.custbody_me_wf_created_by || null,
-                custbody_me_wf_in_delegation      : header.custbody_me_wf_in_delegation || null,
-                custbody_me_delegate_approver     : header.custbody_me_delegate_approver || null,
-                custbody_me_wf_next_approver_blank: header.custbody_me_wf_next_approver_blank || null,
-                custbody_me_wf_next_approver_blank_display: header.custbody_me_wf_next_approver_blank_display || null,
-                customform                        : header.customform || null,
-                customform_display                : header.customform_display || null,
-                custbody_msi_createdby_api        : header.custbody_msi_createdby_api || null,
-                custbody_me_pr_date               : formatDate(header.custbody_me_pr_date) || null,
-                custbody_me_project_location      : header.custbody_me_project_location || null,
-                custbody_me_pr_type               : header.custbody_me_pr_type || null,
-                custbody_me_saving_type           : header.custbody_me_saving_type || null,
-                custbody_me_pr_number             : header.custbody_me_pr_number || null,
-                custbody_me_description           : header.custbody_me_description || null,
-                intercotransaction                : header.intercotransaction || null,
-                terms                             : header.terms || null,
-                duedate                           : formatDate(header.duedate) || null,
-                otherrefnum                       : header.otherrefnum || null,
-                subsidiary                        : header.subsidiary || null,
-                subsidiary_display                : header.subsidiary_display || null,
-                location                          : header.location || null,
-                location_display                  : header.location_display || null,
-                lines          : linesByPo[String(header.po_id)] || []
-            }));
+            // ── Search Line Items ─────────────────────────────────────────────
+            let linesByPo = {};
+            if (foundPoIds.length > 0) {
+                let lineSearch = search.create({
+                    type: search.Type.PURCHASE_ORDER,
+                    filters: [
+                        ['internalid', 'anyof', foundPoIds],
+                        'AND',
+                        ['mainline', 'is', 'F'],
+                        'AND',
+                        ['taxline', 'is', 'F'],
+                        'AND',
+                        ['shipping', 'is', 'F']
+                    ],
+                    columns: [
+                        'internalid', 'line', 'item', 'itemtype', 'quantity', 'quantitybilled', 
+                        'rate', 'amount', 'taxamount', 'taxcode', 'memo', 
+                        'location', 'department', 'class', 
+                        'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies'
+                    ]
+                });
+
+                lineSearch.run().each(res => {
+                    let poId = res.getValue('internalid');
+                    if (!linesByPo[poId]) linesByPo[poId] = [];
+                    
+                    let netAmount = Number(res.getValue('amount')) || 0;
+                    let taxAmount = Number(res.getValue('taxamount')) || 0;
+
+                    linesByPo[poId].push({
+                        transaction:        poId,
+                        linesequencenumber: res.getValue('line'),
+                        item:               res.getValue('item'),
+                        item_display:       res.getText('item'),
+                        itemtype:           res.getValue('itemtype'),
+                        quantity:           res.getValue('quantity'),
+                        quantitybilled:     res.getValue('quantitybilled'),
+                        rate:               res.getValue('rate'),
+                        netamount:          netAmount,
+                        tax1amt:            taxAmount,
+                        grossamt:           Math.abs(netAmount) + Math.abs(taxAmount),
+                        taxcode:            res.getValue('taxcode'),
+                        taxcode_display:    res.getText('taxcode'),
+                        taxrate1:           res.getValue('taxrate'),
+                        memo:               res.getValue('memo'),
+                        location:           res.getValue('location'),
+                        location_display:   res.getText('location'),
+                        department:         res.getValue('department'),
+                        department_display: res.getText('department'),
+                        class:              res.getValue('class'),
+                        class_display:      res.getText('class'),
+                        units:              res.getText('units'),
+                        units_display:      res.getText('units'),
+                        isbillable:         res.getValue('isbillable'),
+                        isclosed:           res.getValue('isclosed'),
+                        matchbilltoreceipt: res.getValue('matchbilltoreceipt'),
+                        expectedreceiptdate: res.getValue('expectedreceiptdate'),
+                        custcol_4601_witaxapplies: res.getValue('custcol_4601_witaxapplies')
+                    });
+                    return true;
+                });
+            }
+
+            // ── Gabungkan header + lines ───────────────────────────────────────
+            let data = pagedHeaders.map(header => {
+                header.lines = linesByPo[header.po_id] || [];
+                return header;
+            });
 
             return {
                 status:        'success',
