@@ -22,28 +22,7 @@
    }
  }
  */
-define(['N/search', 'N/query'], function (search, query) {
-
-    // Helper: format standard NetSuite date to ISO
-    var formatToISO = function (dateStr) {
-        if (!dateStr) return null;
-        var regex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*(AM|PM))?$/i;
-        var m = dateStr.match(regex);
-        if (!m) return dateStr;
-
-        var day   = parseInt(m[1]);
-        var month = parseInt(m[2]) - 1;
-        var year  = parseInt(m[3]);
-        var hour  = m[4] ? parseInt(m[4]) : 0;
-        var min   = m[5] ? parseInt(m[5]) : 0;
-        var ampm  = m[6] ? m[6].toUpperCase() : null;
-
-        if (ampm === 'PM' && hour !== 12) hour += 12;
-        if (ampm === 'AM' && hour === 12) hour = 0;
-
-        var pad = function(n) { return String(n).padStart(2, '0'); };
-        return year + '-' + pad(month + 1) + '-' + pad(day) + 'T' + pad(hour) + ':' + pad(min) + ':00+07:00';
-    };
+define(['N/search'], function (search) {
 
     function post(context) {
         try {
@@ -191,61 +170,62 @@ define(['N/search', 'N/query'], function (search, query) {
             var invcIds = headers.map(function(h) { return h.id; });
             
             if (invcIds.length > 0) {
-                var invcIdsStr = invcIds.join(',');
-
-                var lineSql = [
-                    "SELECT",
-                    "  transaction,",
-                    "  linesequencenumber AS line,",
-                    "  item,",
-                    "  BUILTIN.DF(item) AS item_display,",
-                    "  itemtype,",
-                    "  ABS(quantity) AS quantity,",
-                    "  rate,",
-                    "  ABS(netamount) AS netamount,",
-                    "  price,",
-                    "  BUILTIN.DF(price) AS price_display,",
-                    "  custcol_me_tier_price,",
-                    "  taxcode,",
-                    "  taxrate1,",
-                    "  (ABS(netamount) + ABS(NVL(tax1amt, 0))) AS grossamt,",
-                    "  tax1amt,",
-                    "  memo",
-                    "FROM transactionline",
-                    "WHERE transaction IN (" + invcIdsStr + ")",
-                    "  AND mainline = 'F'",
-                    "  AND taxline = 'F'",
-                    "  AND itemtype IS NOT NULL", 
-                    "ORDER BY transaction, linesequencenumber"
-                ].join('\n');
-
-                var lineResult = query.runSuiteQL({ query: lineSql, params: [] }).asMappedResults();
+                var lineSearch = search.create({
+                    type: search.Type.TRANSACTION,
+                    filters: [
+                        ['internalid', 'anyof', invcIds],
+                        'AND',
+                        ['mainline', 'is', 'F'],
+                        'AND',
+                        ['taxline', 'is', 'F'],
+                        'AND',
+                        ['item', 'noneof', '@NONE@']
+                    ],
+                    columns: [
+                        search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
+                        search.createColumn({ name: 'line', sort: search.Sort.ASC }),
+                        search.createColumn({ name: 'item' }),
+                        search.createColumn({ name: 'type', join: 'item' }),
+                        search.createColumn({ name: 'quantity' }),
+                        search.createColumn({ name: 'rate' }),
+                        search.createColumn({ name: 'amount' }),
+                        search.createColumn({ name: 'pricelevel' }),
+                        search.createColumn({ name: 'custcol_me_tier_price' }),
+                        search.createColumn({ name: 'taxcode' }),
+                        search.createColumn({ name: 'rate', join: 'taxitem' }),
+                        search.createColumn({ name: 'taxamount' }),
+                        search.createColumn({ name: 'grossamount' }),
+                        search.createColumn({ name: 'memo' })
+                    ]
+                });
 
                 var linesByInvoice = {};
-                for (var j = 0; j < lineResult.length; j++) {
-                    var l = lineResult[j];
-                    var iId = String(l.transaction);
+                lineSearch.run().each(function(r) {
+                    var iId = String(r.getValue('internalid'));
                     if (!linesByInvoice[iId]) {
                         linesByInvoice[iId] = [];
                     }
+
+
                     linesByInvoice[iId].push({
-                        line                             : l.line != null ? Number(l.line) : null,
-                        item                             : l.item ? String(l.item) : null,
-                        item_display                     : l.item_display || null,
-                        itemtype                         : l.itemtype || null,
-                        memo                             : l.memo || null,
-                        quantity                         : l.quantity != null ? Number(l.quantity) : 0,
-                        rate                             : l.rate != null ? Number(l.rate) : 0,
-                        netamount                        : l.netamount != null ? Number(l.netamount) : 0,
-                        price                            : l.price ? String(l.price) : null,
-                        price_display                    : l.price_display || null,
-                        custcol_me_tier_price            : l.custcol_me_tier_price || null,
-                        taxcode                          : l.taxcode ? String(l.taxcode) : null,
-                        taxrate1                         : l.taxrate1 || null,
-                        grossamt                         : l.grossamt != null ? Number(l.grossamt) : 0,
-                        tax1amt                          : l.tax1amt != null ? Number(l.tax1amt) : 0
+                        line                 : r.getValue('line') ? Number(r.getValue('line')) : null,
+                        item                 : r.getValue('item') || null,
+                        item_display         : r.getText('item') || null,
+                        itemtype             : r.getValue({ name: 'type', join: 'item' }) || null,
+                        memo                 : r.getValue('memo') || null,
+                        quantity             : r.getValue('quantity') || null,
+                        rate                 : r.getValue('rate') || null,
+                        netamount            : r.getValue('amount') || null,
+                        price                : r.getValue('pricelevel') || null,
+                        price_display        : r.getText('pricelevel') || null,
+                        custcol_me_tier_price: r.getValue('custcol_me_tier_price') || null,
+                        taxcode              : r.getValue('taxcode') || null,
+                        taxrate1             : r.getValue({ name: 'rate', join: 'taxitem' }) || null,
+                        grossamt             : r.getValue('grossamount') || null,
+                        taxamount            : r.getValue('taxamount') || null
                     });
-                }
+                    return true;
+                });
 
                 headers.forEach(function(h) {
                     h.lines = linesByInvoice[h.id] || [];

@@ -49,10 +49,8 @@ define(['N/search', 'N/log'], (search, log) => {
                 'po_number': 'tranid',
                 't.trandate': 'trandate',
                 'po_date': 'trandate',
-                't.lastmodifieddate': 'lastmodifieddate',
-                'last_modified': 'lastmodifieddate'
+                'lastmodified': 'lastmodifieddate'
             };
-            let searchSortBy = sortMap[sortBy] || sortBy.replace(/^t\./, '');
 
             let filtersBody = body.filters || {};
 
@@ -77,9 +75,9 @@ define(['N/search', 'N/log'], (search, log) => {
             }
 
             if (filtersBody.lastmodified) {
-                // Formatting date for search might vary, but ISO is usually accepted or needs M/D/YYYY
-                // For simplified "greater than", we often use 'after' or 'onorafter'
-                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', filtersBody.lastmodified]);
+                var d = new Date(filtersBody.lastmodified);
+                var nsDate = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
+                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
             }
 
             if (filtersBody.vendor_id) {
@@ -140,7 +138,7 @@ define(['N/search', 'N/log'], (search, log) => {
                     currency_symbol:                   res.getText('currency'),
                     foreigntotal:                      res.getValue('fxamount'),
                     total:                             res.getValue('amount'),
-                    last_modified:                     res.getValue('lastmodifieddate'),
+                    lastmodified:                      res.getValue('lastmodifieddate'),
                     approvalstatus:                    res.getValue('approvalstatus'),
                     custbody_me_wf_created_by:         res.getValue('custbody_me_wf_created_by'),
                     custbody_me_wf_in_delegation:      res.getValue('custbody_me_wf_in_delegation'),
