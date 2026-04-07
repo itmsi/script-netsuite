@@ -161,6 +161,7 @@ define(['N/search'], function (search) {
                     location                           : r.getValue('location') || null,
                     location_display                   : r.getText('location') || null,
                     custbody_cseg_cn_cfi               : r.getValue('custbody_cseg_cn_cfi') || null,
+                    custbody_cseg_cn_cfi_display       : r.getText('custbody_cseg_cn_cfi') || null,
                     custbody_me_description            : r.getValue('custbody_me_description') || null,
                     lastmodifieddate                   : r.getValue('lastmodifieddate') || null,
                     lines                              : []
@@ -209,6 +210,9 @@ define(['N/search'], function (search) {
                     }
 
 
+                    var netamount = r.getValue('amount') ? Number(r.getValue('amount')) : 0;
+                    var taxamount = r.getValue('taxamount') ? Math.abs(Number(r.getValue('taxamount'))) : 0;
+
                     linesByInvoice[iId].push({
                         line                 : r.getValue('line') ? Number(r.getValue('line')) : null,
                         item                 : r.getValue('item') || null,
@@ -223,7 +227,7 @@ define(['N/search'], function (search) {
                         custcol_me_tier_price: r.getValue('custcol_me_tier_price') || null,
                         taxcode              : r.getValue('taxcode') || null,
                         taxrate             : 0, // Fallback placeholder
-                        grossamt             : r.getValue('grossamount') || null,
+                        grossamt             : netamount + taxamount,
                         taxamount            : r.getValue('taxamount') || null,
                         custitem_me_product_category: r.getValue({ name: 'custitem_me_product_category', join: 'item' }) || null,
                         custitem_me_product_category_display: r.getText({ name: 'custitem_me_product_category', join: 'item' }) || null,
