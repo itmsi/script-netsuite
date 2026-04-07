@@ -24,6 +24,34 @@
  */
 define(['N/search'], function (search) {
 
+function formatToISO(dateStr) {
+    if (!dateStr) return null;
+
+    var regex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
+    var m = dateStr.match(regex);
+
+    if (!m) return dateStr;
+
+    var day = parseInt(m[1]);
+    var month = parseInt(m[2]);
+    var year = parseInt(m[3]);
+    var hour = parseInt(m[4]);
+    var minute = parseInt(m[5]);
+    var ampm = m[6].toUpperCase();
+
+    if (ampm === "PM" && hour !== 12) hour += 12;
+    if (ampm === "AM" && hour === 12) hour = 0;
+
+    const Y  = year;
+    const M  = String(month).padStart(2, "0");
+    const D  = String(day).padStart(2, "0");
+    const HH = String(hour).padStart(2, "0");
+    const MM = String(minute).padStart(2, "0");
+    const SS = "00";
+
+    return `${Y}-${M}-${D}T${HH}:${MM}:${SS}+07:00`;
+}
+
     function post(context) {
         try {
             var page      = context.page       || 1;
@@ -163,7 +191,7 @@ define(['N/search'], function (search) {
                     custbody_cseg_cn_cfi               : r.getValue('custbody_cseg_cn_cfi') || null,
                     custbody_cseg_cn_cfi_display       : r.getText('custbody_cseg_cn_cfi') || null,
                     custbody_me_description            : r.getValue('custbody_me_description') || null,
-                    lastmodifieddate                   : r.getValue('lastmodifieddate') || null,
+                    last_modified                      : formatToISO(r.getValue('lastmodifieddate')) || null,
                     lines                              : []
                 };
             });

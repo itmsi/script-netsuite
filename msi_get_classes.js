@@ -24,6 +24,24 @@
  */
 define(['N/query', 'N/log'], function (query, log) {
 
+    function formatToISO(dateStr) {
+        if (!dateStr) return null;
+
+        var d = new Date(dateStr);
+
+        // kalau gagal parse
+        if (isNaN(d)) return dateStr;
+
+        const Y  = d.getFullYear();
+        const M  = String(d.getMonth() + 1).padStart(2, "0");
+        const D  = String(d.getDate()).padStart(2, "0");
+        const HH = String(d.getHours()).padStart(2, "0");
+        const MM = String(d.getMinutes()).padStart(2, "0");
+        const SS = String(d.getSeconds()).padStart(2, "0");
+
+        return `${Y}-${M}-${D}T${HH}:${MM}:${SS}+07:00`;
+    }
+
     // Allowed sort columns
     var ALLOWED_SORT = {
         'name'            : 'name',
@@ -151,7 +169,7 @@ define(['N/query', 'N/log'], function (query, log) {
                     parent_name    : r.parent_name || null,
                     subsidiary_id  : r.subsidiary  ? String(r.subsidiary) : null,
                     subsidiary_name: r.subsidiary_name || null,
-                    last_modified  : r.lastmodifieddate
+                    last_modified  : formatToISO(r.lastmodifieddate)
                 };
             });
 

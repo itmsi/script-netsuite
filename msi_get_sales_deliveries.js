@@ -15,7 +15,53 @@
    }
  }
  */
-define(['N/query', 'N/log'], function (query, log) {
+define(['N/query'], function (query) {
+
+    function formatToISO(dateStr) {
+        if (!dateStr) return null;
+
+        // =========================
+        // 1. FORMAT: DD/MM/YYYY HH:mm AM/PM
+        // =========================
+        var fullRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
+        var m1 = dateStr.match(fullRegex);
+
+        if (m1) {
+            var day = parseInt(m1[1]);
+            var month = parseInt(m1[2]);
+            var year = parseInt(m1[3]);
+            var hour = parseInt(m1[4]);
+            var minute = parseInt(m1[5]);
+            var ampm = m1[6].toUpperCase();
+
+            if (ampm === "PM" && hour !== 12) hour += 12;
+            if (ampm === "AM" && hour === 12) hour = 0;
+
+            return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}:00+07:00`;
+        }
+
+        // =========================
+        // 2. FORMAT: DD/MM/YYYY (tanpa jam)
+        // =========================
+        var shortRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+        var m2 = dateStr.match(shortRegex);
+
+        if (m2) {
+            var day = parseInt(m2[1]);
+            var month = parseInt(m2[2]);
+            var year = parseInt(m2[3]);
+
+            return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T00:00:00+07:00`;
+        }
+
+        // =========================
+        // 3. FALLBACK
+        // =========================
+        var d = new Date(dateStr);
+        if (isNaN(d)) return dateStr;
+
+        return d.toISOString();
+    }
 
     function post(context) {
         try {
@@ -52,7 +98,6 @@ define(['N/query', 'N/log'], function (query, log) {
             if (filters.lastmodified) {
                 // Konversi ISO ke format: MM/DD/YYYY untuk perbandingan date di SuiteQL
                 var nsDate = isoToNsDate(filters.lastmodified);
-                log.debug('LASTMODIFIED FILTER', nsDate);
                 whereClauses.push("t.lastmodifieddate >= TO_DATE('" + nsDate + "', 'MM/DD/YYYY')");
             }
 
@@ -142,7 +187,6 @@ define(['N/query', 'N/log'], function (query, log) {
             };
 
         } catch (e) {
-            log.error('ERROR', e);
             return {
                 status : 'error',
                 message: e.message || JSON.stringify(e)
