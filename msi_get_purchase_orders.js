@@ -198,6 +198,7 @@ define(['N/search'], (search) => {
                     custbody_me_description:           res.getValue('custbody_me_description'),
                     intercotransaction:                res.getValue('intercotransaction'),
                     terms:                             res.getValue('terms'),
+                    terms_display:                     res.getText('terms'),
                     duedate:                           res.getValue('duedate'),
                     otherrefnum:                       res.getValue('otherrefnum'),
                     subsidiary:                        res.getValue('subsidiarynohierarchy'),
