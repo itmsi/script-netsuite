@@ -84,14 +84,14 @@ define(['N/search'], function (search) {
                 search.createColumn({ name: 'custbody_me_wf_next_approver_blank' }),
                 search.createColumn({ name: 'saleseffectivedate' }),
                 search.createColumn({ name: 'createdfrom' }),
-                search.createColumn({ name: 'subsidiary' }),
                 search.createColumn({ name: 'department' }),
                 search.createColumn({ name: 'class' }),
                 search.createColumn({ name: 'location' }),
                 search.createColumn({ name: 'custbody_cseg_cn_cfi' }),
                 search.createColumn({ name: 'custbody_me_description' }),
                 search.createColumn({ name: 'status' }),
-                search.createColumn({ name: 'lastmodifieddate' })
+                search.createColumn({ name: 'lastmodifieddate' }),
+                search.createColumn({ name: 'subsidiarynohierarchy' })
             ];
             
             // Apply sorting ke salah satu kolom
@@ -152,8 +152,8 @@ define(['N/search'], function (search) {
                     saleseffectivedate                 : r.getValue('saleseffectivedate'),
                     createdfrom                        : r.getValue('createdfrom') || null,
                     createdfrom_display                : r.getText('createdfrom') || null,
-                    subsidiary                         : r.getValue('subsidiary') || null,
-                    subsidiary_display                 : r.getText('subsidiary') || null,
+                    subsidiary                         : r.getValue('subsidiarynohierarchy') || null,
+                    subsidiary_display                 : r.getText('subsidiarynohierarchy') || null,
                     department                         : r.getValue('department') || null,
                     department_display                 : r.getText('department') || null,
                     class                              : r.getValue('class') || null,
@@ -162,6 +162,7 @@ define(['N/search'], function (search) {
                     location_display                   : r.getText('location') || null,
                     custbody_cseg_cn_cfi               : r.getValue('custbody_cseg_cn_cfi') || null,
                     custbody_me_description            : r.getValue('custbody_me_description') || null,
+                    lastmodifieddate                   : r.getValue('lastmodifieddate') || null,
                     lines                              : []
                 };
             });
@@ -171,7 +172,7 @@ define(['N/search'], function (search) {
             
             if (invcIds.length > 0) {
                 var lineSearch = search.create({
-                    type: search.Type.TRANSACTION,
+                    type: search.Type.INVOICE,
                     filters: [
                         ['internalid', 'anyof', invcIds],
                         'AND',
@@ -192,10 +193,11 @@ define(['N/search'], function (search) {
                         search.createColumn({ name: 'pricelevel' }),
                         search.createColumn({ name: 'custcol_me_tier_price' }),
                         search.createColumn({ name: 'taxcode' }),
-                        search.createColumn({ name: 'rate', join: 'taxitem' }),
                         search.createColumn({ name: 'taxamount' }),
                         search.createColumn({ name: 'grossamount' }),
-                        search.createColumn({ name: 'memo' })
+                        search.createColumn({ name: 'memo' }),
+                        search.createColumn({ name: 'custitem_me_product_category', join: 'item' }),
+                        search.createColumn({ name: 'custitem_me_unit_type', join: 'item' })
                     ]
                 });
 
@@ -220,15 +222,65 @@ define(['N/search'], function (search) {
                         price_display        : r.getText('pricelevel') || null,
                         custcol_me_tier_price: r.getValue('custcol_me_tier_price') || null,
                         taxcode              : r.getValue('taxcode') || null,
-                        taxrate1             : r.getValue({ name: 'rate', join: 'taxitem' }) || null,
+                        taxrate             : 0, // Fallback placeholder
                         grossamt             : r.getValue('grossamount') || null,
-                        taxamount            : r.getValue('taxamount') || null
+                        taxamount            : r.getValue('taxamount') || null,
+                        custitem_me_product_category: r.getValue({ name: 'custitem_me_product_category', join: 'item' }) || null,
+                        custitem_me_product_category_display: r.getText({ name: 'custitem_me_product_category', join: 'item' }) || null,
+                        custitem_me_unit_type: r.getValue({ name: 'custitem_me_unit_type', join: 'item' }) || null
                     });
                     return true;
                 });
 
+                // Robust tax rate lookup
+                var taxCodeIds = [];
+                Object.keys(linesByInvoice).forEach(function(invId) {
+                    linesByInvoice[invId].forEach(function(line) {
+                        if (line.taxcode && taxCodeIds.indexOf(line.taxcode) === -1) {
+                            taxCodeIds.push(line.taxcode);
+                        }
+                    });
+                });
+
+                var taxRateMap = {};
+                if (taxCodeIds.length > 0) {
+                    var taxSearch = search.create({
+                        type: 'salestaxitem',
+                        filters: [['internalid', 'anyof', taxCodeIds]],
+                        columns: ['rate']
+                    });
+                    taxSearch.run().each(function(r) {
+                        var rateStr = r.getValue('rate') || "0%";
+                        taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
+                        return true;
+                    });
+                    
+                    // Fallback search for Tax Groups if needed
+                    var missingIds = taxCodeIds.filter(function(id) { return !taxRateMap[id]; });
+                    if (missingIds.length > 0) {
+                        var groupSearch = search.create({
+                            type: 'taxgroup',
+                            filters: [['internalid', 'anyof', missingIds]],
+                            columns: ['rate']
+                        });
+                        groupSearch.run().each(function(r) {
+                            var rateStr = r.getValue('rate') || "0%";
+                            taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
+                            return true;
+                        });
+                    }
+                }
+
                 headers.forEach(function(h) {
-                    h.lines = linesByInvoice[h.id] || [];
+                    var lines = linesByInvoice[h.id] || [];
+                    lines.forEach(function(line) {
+                        if (line.taxcode && taxRateMap[line.taxcode] !== undefined) {
+                            line.taxrate = taxRateMap[line.taxcode];
+                        } else {
+                            line.taxrate = 0;
+                        }
+                    });
+                    h.lines = lines;
                 });
             }
 

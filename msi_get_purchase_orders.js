@@ -99,7 +99,8 @@ define(['N/search', 'N/log'], (search, log) => {
                     'custbody_me_saving_type', 'custbody_me_pr_number',
                     'custbody_me_description', 'intercotransaction', 'terms',
                     'duedate', 'otherrefnum', 'customform', 
-                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' })
+                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
+                    'subsidiarynohierarchy'
                 ]
             });
 
@@ -154,8 +155,8 @@ define(['N/search', 'N/log'], (search, log) => {
                     terms:                             res.getValue('terms'),
                     duedate:                           res.getValue('duedate'),
                     otherrefnum:                       res.getValue('otherrefnum'),
-                    subsidiary:                        res.getValue('subsidiary'),
-                    subsidiary_display:                res.getText('subsidiary'),
+                    subsidiary:                        res.getValue('subsidiarynohierarchy'),
+                    subsidiary_display:                res.getText('subsidiarynohierarchy'),
                     location:                          res.getValue('location'),
                     location_display:                  res.getText('location'),
                     customform:                        res.getValue('customform'),
