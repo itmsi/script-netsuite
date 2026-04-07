@@ -29,7 +29,7 @@
 
 
  */
-define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
+define(['N/record', 'N/format'], function (record, format) {
 
     function post(body) {
         try {
@@ -194,9 +194,6 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
                             });
                         }
                     } catch (e) {
-                        // Hiraukan error jika text tidak match persis karena NetSuite isDynamic 
-                        // otomatis me-resolve unit bawaan dari item saat kita melalukan set item.
-                        log.error('Unit Set Warning', 'Gagal set unit (' + lineData.units + '): ' + e.message);
                     }
                 }
 
@@ -272,14 +269,6 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
                 }
 
                 transfer.commitLine({ sublistId: 'inventory' });
-
-                log.debug('LINE ADDED', {
-                    line    : l,
-                    item    : lineData.item,
-                    quantity: qty,
-                    from    : fromLocationId,
-                    to      : toLocationId
-                });
             }
 
             // =========================
@@ -299,7 +288,6 @@ define(['N/record', 'N/format', 'N/log'], function (record, format, log) {
             };
 
         } catch (e) {
-            log.error('ERROR', e);
             return {
                 status : 'error',
                 name   : e.name,

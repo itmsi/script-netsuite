@@ -21,7 +21,7 @@
  * - quantity: jumlah yang diterima (opsional jika pakai serials)
  * - serials : array internal ID serial/lot number (opsional)
  */
-define(['N/record', 'N/log'], function (record, log) {
+define(['N/record'], function (record) {
 
     function post(context) {
         try {
@@ -65,12 +65,6 @@ define(['N/record', 'N/log'], function (record, log) {
                 var needInvDetail = itemReceipt.getCurrentSublistValue({
                     sublistId: 'item',
                     fieldId  : 'inventorydetailreq'
-                });
-
-                log.debug('CHECK LINE', {
-                    line        : i,
-                    qtyRemaining: qtyRemaining,
-                    needInvDetail: needInvDetail
                 });
 
                 if (qtyRemaining <= 0) continue;
@@ -149,7 +143,6 @@ define(['N/record', 'N/log'], function (record, log) {
                                     text     : String(serials[s])
                                 });
                             } catch (e2) {
-                                log.error('SERIAL SET ERROR line ' + i + ' serial ' + s, e2.message);
                             }
                         }
 
@@ -181,7 +174,6 @@ define(['N/record', 'N/log'], function (record, log) {
             };
 
         } catch (e) {
-            log.error('ERROR', e);
             return {
                 status : 'error',
                 message: e.message

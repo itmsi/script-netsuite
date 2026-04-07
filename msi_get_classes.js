@@ -22,7 +22,7 @@
  *
  * sort_by values: "name" | "id" | "lastmodifieddate"
  */
-define(['N/query', 'N/log'], function (query, log) {
+define(['N/query'], function (query) {
 
     function formatToISO(dateStr) {
         if (!dateStr) return null;
@@ -211,7 +211,6 @@ define(['N/query', 'N/log'], function (query, log) {
             };
 
         } catch (e) {
-            log.error('ERROR', e);
             return {
                 status : 'error',
                 message: e.message || JSON.stringify(e)
