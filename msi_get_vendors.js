@@ -91,6 +91,7 @@ define(['N/search'], (search) => {
                 "companyname",
                 "email",
                 "phone",
+                "subsidiary",
                 search.createColumn({
                     name: 'lastmodifieddate',
                     sort: search.Sort.DESC
@@ -119,6 +120,8 @@ define(['N/search'], (search) => {
             companyName: result.getValue("companyname"),
             email: result.getValue("email"),
             phone: result.getValue("phone"),
+            subsidiary: result.getValue("subsidiary"),
+            subsidiary_display: result.getText("subsidiary"),
             lastModifiedDate: formatToISO(result.getValue("lastmodifieddate")),
             lastModifiedDateRaw: result.getValue("lastmodifieddate")
         }));
