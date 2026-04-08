@@ -141,8 +141,7 @@ define(['N/search'], (search) => {
                     'custbody_me_wf_in_delegation', 'custbody_me_delegate_approver',
                     'custbody_msi_createdby_api', 'custbody_me_pr_date',
                     'custbody_me_project_location', 'custbody_me_pr_type',
-                    'custbody_me_saving_type', 'custbody_me_pr_number',
-                    'custbody_me_description', 'intercotransaction', 'terms',
+                    'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
                     'duedate', 'otherrefnum', 'customform', 
                     search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
                     'subsidiarynohierarchy'
@@ -195,7 +194,6 @@ define(['N/search'], (search) => {
                     custbody_me_pr_type:               res.getValue('custbody_me_pr_type'),
                     custbody_me_saving_type:           res.getValue('custbody_me_saving_type'),
                     custbody_me_pr_number:             res.getValue('custbody_me_pr_number'),
-                    custbody_me_description:           res.getValue('custbody_me_description'),
                     intercotransaction:                res.getValue('intercotransaction'),
                     terms:                             res.getValue('terms'),
                     terms_display:                     res.getText('terms'),

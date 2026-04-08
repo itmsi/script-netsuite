@@ -116,7 +116,6 @@ function formatToISO(dateStr) {
                 search.createColumn({ name: 'class' }),
                 search.createColumn({ name: 'location' }),
                 search.createColumn({ name: 'custbody_cseg_cn_cfi' }),
-                search.createColumn({ name: 'custbody_me_description' }),
                 search.createColumn({ name: 'status' }),
                 search.createColumn({ name: 'lastmodifieddate' }),
                 search.createColumn({ name: 'subsidiarynohierarchy' })
@@ -190,7 +189,6 @@ function formatToISO(dateStr) {
                     location_display                   : r.getText('location') || null,
                     custbody_cseg_cn_cfi               : r.getValue('custbody_cseg_cn_cfi') || null,
                     custbody_cseg_cn_cfi_display       : r.getText('custbody_cseg_cn_cfi') || null,
-                    custbody_me_description            : r.getValue('custbody_me_description') || null,
                     last_modified                      : formatToISO(r.getValue('lastmodifieddate')) || null,
                     lines                              : []
                 };
