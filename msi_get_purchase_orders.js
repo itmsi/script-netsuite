@@ -144,7 +144,7 @@ define(['N/search'], (search) => {
                     'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
                     'duedate', 'otherrefnum', 'customform', 'class', 
                     search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
-                    'subsidiarynohierarchy'
+                    'subsidiarynohierarchy', 'custbody_me_validity_date'
                 ]
             });
 
@@ -207,7 +207,8 @@ define(['N/search'], (search) => {
                     customform_display:                res.getText('customform'),
                     class:                             res.getValue('class'),
                     class_display:                     res.getText('class'),
-                    nextapprover:                      res.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' })
+                    nextapprover:                      res.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
+                    custbody_me_validity_date:         res.getValue('custbody_me_validity_date')
                 });
             });
 
@@ -229,7 +230,7 @@ define(['N/search'], (search) => {
                         'internalid', 'line', 'item', 'itemtype', 'quantity', 'quantitybilled', 
                         'rate', 'amount', 'taxamount', 'taxcode', 'memo', 
                         'location', 'department', 'class', 
-                        'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies'
+                        'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost'
                     ]
                 });
 
@@ -247,7 +248,7 @@ define(['N/search'], (search) => {
                         quantitybilled:     res.getValue('quantitybilled'),
                         rate:               res.getValue('rate'),
                         netamount:          res.getValue('amount'),
-                        tax1amt:            res.getValue('taxamount'),
+                        tax1amt:            Math.abs(res.getValue('taxamount')),
                         grossamt:           Math.abs(res.getValue('amount')) + Math.abs(res.getValue('taxamount')),
                         taxcode:            res.getValue('taxcode'),
                         taxcode_display:    res.getText('taxcode'),
@@ -265,7 +266,9 @@ define(['N/search'], (search) => {
                         isclosed:           res.getValue('isclosed'),
                         matchbilltoreceipt: res.getValue('matchbilltoreceipt'),
                         expectedreceiptdate: res.getValue('expectedreceiptdate'),
-                        custcol_4601_witaxapplies: res.getValue('custcol_4601_witaxapplies')
+                        custcol_4601_witaxapplies: res.getValue('custcol_4601_witaxapplies'),
+                        custcol_msi_fob: res.getValue('custcol_msi_fob'),
+                        custcol_me_landed_cost: res.getValue('custcol_me_landed_cost')
                     });
                     return true;
                 });
