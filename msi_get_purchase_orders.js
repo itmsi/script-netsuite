@@ -142,7 +142,7 @@ define(['N/search'], (search) => {
                     'custbody_msi_createdby_api', 'custbody_me_pr_date',
                     'custbody_me_project_location', 'custbody_me_pr_type',
                     'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
-                    'duedate', 'otherrefnum', 'customform', 
+                    'duedate', 'otherrefnum', 'customform', 'class', 
                     search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
                     'subsidiarynohierarchy'
                 ]
@@ -205,6 +205,8 @@ define(['N/search'], (search) => {
                     location_display:                  res.getText('location'),
                     customform:                        res.getValue('customform'),
                     customform_display:                res.getText('customform'),
+                    class:                             res.getValue('class'),
+                    class_display:                     res.getText('class'),
                     nextapprover:                      res.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' })
                 });
             });
