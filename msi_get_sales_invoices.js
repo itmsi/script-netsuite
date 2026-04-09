@@ -224,23 +224,40 @@ function formatToISO(dateStr) {
                         search.createColumn({ name: 'grossamount' }),
                         search.createColumn({ name: 'memo' }),
                         search.createColumn({ name: 'custitem_me_product_category', join: 'item' }),
-                        search.createColumn({ name: 'custitem_me_unit_type', join: 'item' })
+                        search.createColumn({ name: 'custitem_me_unit_type', join: 'item' }),
+                        search.createColumn({ name: 'inventorynumber', join: 'inventoryDetail' })
                     ]
                 });
 
                 var linesByInvoice = {};
+                // lineKeyIndex: map "invoiceId_lineNum" -> index in linesByInvoice[iId] array
+                // digunakan agar row duplikat akibat multiple VIN tidak menduplikasi baris
+                var lineKeyIndex = {};
+
                 lineSearch.run().each(function(r) {
-                    var iId = String(r.getValue('internalid'));
+                    var iId     = String(r.getValue('internalid'));
+                    var lineNum = r.getValue('line') ? Number(r.getValue('line')) : null;
+                    var lineKey = iId + '_' + lineNum;
+                    var vinNumber = r.getText({ name: 'inventorynumber', join: 'inventoryDetail' }) || null;
+
                     if (!linesByInvoice[iId]) {
                         linesByInvoice[iId] = [];
                     }
 
+                    // Jika line sudah ada (karena row duplikat dari multiple VIN), cukup tambah VIN-nya
+                    if (lineKeyIndex[lineKey] !== undefined) {
+                        var existingLine = linesByInvoice[iId][lineKeyIndex[lineKey]];
+                        if (vinNumber && existingLine.vinNumbers.indexOf(vinNumber) === -1) {
+                            existingLine.vinNumbers.push(vinNumber);
+                        }
+                        return true;
+                    }
 
                     var netamount = r.getValue('amount') ? Number(r.getValue('amount')) : 0;
                     var taxamount = r.getValue('taxamount') ? Math.abs(Number(r.getValue('taxamount'))) : 0;
 
-                    linesByInvoice[iId].push({
-                        line                 : r.getValue('line') ? Number(r.getValue('line')) : null,
+                    var newLine = {
+                        line                 : lineNum,
                         item                 : r.getValue('item') || null,
                         item_display         : r.getText('item') || null,
                         itemtype             : r.getValue({ name: 'type', join: 'item' }) || null,
@@ -252,14 +269,27 @@ function formatToISO(dateStr) {
                         price_display        : r.getText('pricelevel') || null,
                         custcol_me_tier_price: r.getValue('custcol_me_tier_price') || null,
                         taxcode              : r.getValue('taxcode') || null,
-                        taxrate             : 0, // Fallback placeholder
+                        taxrate              : 0, // Fallback placeholder
                         grossamt             : netamount + taxamount,
                         taxamount            : r.getValue('taxamount') || null,
                         custitem_me_product_category: r.getValue({ name: 'custitem_me_product_category', join: 'item' }) || null,
                         custitem_me_product_category_display: r.getText({ name: 'custitem_me_product_category', join: 'item' }) || null,
-                        custitem_me_unit_type: r.getValue({ name: 'custitem_me_unit_type', join: 'item' }) || null
-                    });
+                        custitem_me_unit_type: r.getValue({ name: 'custitem_me_unit_type', join: 'item' }) || null,
+                        vinNumbers           : vinNumber ? [vinNumber] : []
+                    };
+
+                    lineKeyIndex[lineKey] = linesByInvoice[iId].length;
+                    linesByInvoice[iId].push(newLine);
                     return true;
+                });
+
+                Object.keys(linesByInvoice).forEach(function(invId) {
+                    linesByInvoice[invId].forEach(function(line) {
+                        if (line.vinNumbers && line.vinNumbers.length > 0) {
+                            line.item_display = (line.item_display || '') + ' VIN Number : ' + line.vinNumbers.join(', ');
+                        }
+                        delete line.vinNumbers;
+                    });
                 });
 
                 // Robust tax rate lookup
