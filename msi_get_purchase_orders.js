@@ -144,7 +144,7 @@ define(['N/search'], (search) => {
                     'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
                     'duedate', 'otherrefnum', 'customform', 'class', 
                     search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
-                    'subsidiarynohierarchy', 'custbody_me_validity_date'
+                    'subsidiarynohierarchy', 'custbody_me_validity_date', 'department'
                 ]
             });
 
@@ -208,7 +208,9 @@ define(['N/search'], (search) => {
                     class:                             res.getValue('class'),
                     class_display:                     res.getText('class'),
                     nextapprover:                      res.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
-                    custbody_me_validity_date:         res.getValue('custbody_me_validity_date')
+                    custbody_me_validity_date:         res.getValue('custbody_me_validity_date'),
+                    department:                        res.getValue('department'),
+                    department_display:                res.getText('department')
                 });
             });
 
