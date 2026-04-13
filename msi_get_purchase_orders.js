@@ -255,7 +255,7 @@ define(['N/search'], (search) => {
                         taxcode:            res.getValue('taxcode'),
                         taxcode_display:    res.getText('taxcode'),
                         taxrate1:           res.getValue('taxrate'),
-                        memo:               res.getValue('memo'),
+                        description:        res.getValue('memo'),
                         location:           res.getValue('location'),
                         location_display:   res.getText('location'),
                         department:         res.getValue('department'),
