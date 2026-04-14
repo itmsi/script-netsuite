@@ -5,23 +5,57 @@
 define(['N/record','N/format'], function (record, format) {
 
     function post(context) {
+        try {            
+          if (context.id) {
+                po = record.load({
+                    type: record.Type.PURCHASE_ORDER,
+                    id: context.id,
+                    isDynamic: true
+                });
 
-        try {
-            var po = record.create({
-                type: record.Type.PURCHASE_ORDER,
-                isDynamic: true
-            });
+                po.setValue({
+                   fieldId: 'customform', 
+                   value: context.customform
+                });
+
+                if (context.subsidiary) {
+                   po.setValue({
+                      fieldId: 'subsidiary',
+                      value: context.subsidiary
+                   });
+                }
+          
+                po.setValue({
+                    fieldId: 'entity', // Vendor Internal ID
+                    value: context.vendorid
+                });
+            } 
+          else {
+                po = record.create({
+                    type: record.Type.PURCHASE_ORDER,
+                    isDynamic: true
+                });
+
+                po.setValue({
+                   fieldId: 'customform', 
+                   value: context.customform
+                });
+
+                po.setValue({
+                    fieldId: 'entity', // Vendor Internal ID
+                    value: context.vendorid
+                });
+            
+                if (context.subsidiary) {
+                   po.setValue({
+                      fieldId: 'subsidiary',
+                      value: context.subsidiary
+                   });
+                }
+            }
 
             // ===== HEADER =====
-            po.setValue({
-                fieldId: 'customform', 
-                value: context.customform
-            });
-          
-            po.setValue({
-                fieldId: 'entity', // Vendor Internal ID
-                value: context.vendorid
-            });
+            
 
             if (context.purchasedate) {
                 var purchaseDateObj = format.parse({
@@ -35,13 +69,6 @@ define(['N/record','N/format'], function (record, format) {
                 });
             }
             
-            if (context.subsidiary) {
-                po.setValue({
-                    fieldId: 'subsidiary',
-                    value: context.subsidiary
-                });
-            }
-
             if (context.location) {
                 po.setValue({
                     fieldId: 'location',
@@ -79,6 +106,19 @@ define(['N/record','N/format'], function (record, format) {
                 po.setValue({
                     fieldId: 'custbody_me_pr_date',
                     value: custbody_me_pr_dateObj
+                });
+            }
+
+           
+            if (context.custbody_me_validity_date) {
+                var custbody_me_validity_dateObj = format.parse({
+                  value: context.custbody_me_validity_date,
+                  type: format.Type.DATE
+                });
+
+                po.setValue({
+                    fieldId: 'custbody_me_validity_date',
+                    value: custbody_me_validity_dateObj
                 });
             }
 
@@ -126,6 +166,20 @@ define(['N/record','N/format'], function (record, format) {
             });
           
             // ===== ITEMS =====
+
+            if (context.items && context.items.length > 0) {
+                if (context.id) {
+                    var lineCount = po.getLineCount({ sublistId: 'item' });
+
+                    for (var i = lineCount - 1; i >= 0; i--) {
+                        po.removeLine({
+                            sublistId: 'item',
+                            line: i
+                        });
+                    }
+                } 
+            }
+          
             context.items.forEach(function (item) {
 
                 po.selectNewLine({ sublistId: 'item' });
@@ -140,6 +194,24 @@ define(['N/record','N/format'], function (record, format) {
                     sublistId: 'item',
                     fieldId: 'quantity',
                     value: item.qty
+                });
+
+                po.setCurrentSublistValue({
+                    sublistId: 'item',
+                    fieldId: 'description',
+                    value: item.description
+                });
+
+                po.setCurrentSublistValue({
+                    sublistId: 'item',
+                    fieldId: 'custcol_msi_fob',
+                    value: item.custcol_msi_fob
+                });
+
+                po.setCurrentSublistValue({
+                    sublistId: 'item',
+                    fieldId: 'custcol_me_landed_cost',
+                    value: item.custcol_me_landed_cost
                 });
 
                 po.setCurrentSublistValue({
