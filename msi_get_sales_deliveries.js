@@ -15,7 +15,7 @@
    }
  }
  */
-define(['N/query'], function (query) {
+define(['N/search'], function (search) {
 
     function formatToISO(dateStr) {
         if (!dateStr) return null;
@@ -27,17 +27,17 @@ define(['N/query'], function (query) {
         var m1 = dateStr.match(fullRegex);
 
         if (m1) {
-            var day = parseInt(m1[1]);
-            var month = parseInt(m1[2]);
-            var year = parseInt(m1[3]);
-            var hour = parseInt(m1[4]);
+            var day    = parseInt(m1[1]);
+            var month  = parseInt(m1[2]);
+            var year   = parseInt(m1[3]);
+            var hour   = parseInt(m1[4]);
             var minute = parseInt(m1[5]);
-            var ampm = m1[6].toUpperCase();
+            var ampm   = m1[6].toUpperCase();
 
-            if (ampm === "PM" && hour !== 12) hour += 12;
-            if (ampm === "AM" && hour === 12) hour = 0;
+            if (ampm === 'PM' && hour !== 12) hour += 12;
+            if (ampm === 'AM' && hour === 12) hour = 0;
 
-            return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}:00+07:00`;
+            return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}:00+07:00`;
         }
 
         // =========================
@@ -47,11 +47,11 @@ define(['N/query'], function (query) {
         var m2 = dateStr.match(shortRegex);
 
         if (m2) {
-            var day = parseInt(m2[1]);
+            var day   = parseInt(m2[1]);
             var month = parseInt(m2[2]);
-            var year = parseInt(m2[3]);
+            var year  = parseInt(m2[3]);
 
-            return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T00:00:00+07:00`;
+            return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T00:00:00+07:00`;
         }
 
         // =========================
@@ -66,114 +66,90 @@ define(['N/query'], function (query) {
     function post(context) {
         try {
 
-            // =========================
-            // 🔥 DEFAULT PARAM
-            // =========================
             var page      = context.page       || 1;
             var pageSize  = context.page_size  || 20;
             var sortBy    = context.sort_by    || 'trandate';
             var sortOrder = context.sort_order || 'DESC';
             var filters   = context.filters    || {};
 
-            // =========================
-            // 🔥 VALIDASI SORT
-            // =========================
-            var allowedSort = {
-                'trandate'        : 't.trandate',
-                'lastmodifieddate': 't.lastmodifieddate',
-                'tranid'          : 't.tranid'
+            // ── Sort mapping ──────────────────────────────────────────────────
+            var sortMap = {
+                'trandate'        : 'trandate',
+                'lastmodifieddate': 'lastmodifieddate',
+                'tranid'          : 'tranid'
             };
+            var sortColName = sortMap[sortBy] || 'trandate';
+            var sortDir     = sortOrder === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
 
-            if (!allowedSort[sortBy]) {
-                sortBy = 'trandate';
-            }
-
-            var sortDir = (sortOrder === 'ASC') ? 'ASC' : 'DESC';
-
-            // =========================
-            // 🔥 FILTER BUILDER
-            // =========================
-            var whereClauses = ["t.type = 'ItemShip'"];
+            // ── Build filters ─────────────────────────────────────────────────
+            var searchFilters = [
+                ['mainline', 'is', 'T']
+            ];
 
             if (filters.lastmodified) {
-                // Konversi ISO ke format: MM/DD/YYYY untuk perbandingan date di SuiteQL
-                var nsDate = isoToNsDate(filters.lastmodified);
-                whereClauses.push("t.lastmodifieddate >= TO_DATE('" + nsDate + "', 'MM/DD/YYYY')");
+                var d = new Date(filters.lastmodified);
+                var nsDate = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
+                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
             }
 
-            var whereStr = whereClauses.join(' AND ');
+            // ── Build columns ─────────────────────────────────────────────────
+            var columns = [
+                search.createColumn({ name: 'internalid' }),
+                search.createColumn({ name: 'tranid' }),
+                search.createColumn({ name: 'trandate' }),
+                search.createColumn({ name: 'status' }),
+                search.createColumn({ name: 'entity' }),
+                search.createColumn({ name: 'shipaddress' }),
+                search.createColumn({ name: 'memo' }),
+                search.createColumn({ name: 'lastmodifieddate' }),
+                search.createColumn({ name: 'datecreated' })
+            ];
 
-            // =========================
-            // 🔥 COUNT QUERY
-            // =========================
-            var countSql = "SELECT COUNT(*) AS cnt FROM transaction t WHERE " + whereStr;
+            // Apply sort ke kolom yang sesuai
+            for (var i = 0; i < columns.length; i++) {
+                if (columns[i].name === sortColName) {
+                    columns[i].sort = sortDir;
+                    break;
+                }
+            }
 
-            var countResult = query.runSuiteQL({ query: countSql, params: [] });
-            var totalRecords = 0;
-            countResult.asMappedResults().forEach(function (row) {
-                totalRecords = row.cnt || 0;
-            });
+            // ── Run search ────────────────────────────────────────────────────
+            var pagedData = search.create({
+                type   : search.Type.ITEM_FULFILLMENT,
+                filters: searchFilters,
+                columns: columns
+            }).runPaged({ pageSize: pageSize });
 
-            var totalPages = Math.ceil(totalRecords / pageSize);
+            var totalRecords = pagedData.count;
+            var totalPages   = pagedData.pageRanges.length;
 
-            if (totalRecords === 0) {
+            if (totalRecords === 0 || page > totalPages) {
                 return {
                     status       : 'success',
                     page         : page,
                     page_size    : pageSize,
-                    total_records: 0,
-                    total_pages  : 0,
+                    total_records: totalRecords,
+                    total_pages  : totalPages,
                     data         : []
                 };
             }
 
-            if (page > totalPages) {
+            var pageResult = pagedData.fetch({ index: page - 1 });
+
+            // ── Map hasil ─────────────────────────────────────────────────────
+            var data = pageResult.data.map(function (r) {
                 return {
-                    status       : 'error',
-                    message      : 'page melebihi total_pages (' + totalPages + ')',
-                    total_records: totalRecords,
-                    total_pages  : totalPages
-                };
-            }
-
-            // =========================
-            // 🔥 DATA QUERY
-            // =========================
-            var offset = (page - 1) * pageSize;
-
-            var dataSql = [
-                "SELECT",
-                "  t.id,",
-                "  t.tranid,",
-                "  t.entity,",
-                "  BUILTIN.DF(t.entity)    AS entity_name,",
-                "  t.trandate,",
-                "  t.status,",
-                "  BUILTIN.DF(t.status)    AS status_name,",
-                "  t.shipaddress,",
-                "  t.memo,",
-                "  t.lastmodifieddate",
-                "FROM transaction t",
-                "WHERE " + whereStr,
-                "ORDER BY " + allowedSort[sortBy] + " " + sortDir,
-                "OFFSET " + offset + " ROWS FETCH NEXT " + pageSize + " ROWS ONLY"
-            ].join('\n');
-
-            var dataResult = query.runSuiteQL({ query: dataSql, params: [] });
-            var rows = dataResult.asMappedResults();
-
-            var data = rows.map(function (row) {
-                return {
-                    id           : String(row.id),
-                    tranid       : row.tranid,
-                    customer_id  : String(row.entity),
-                    customer_name: row.entity_name,
-                    tran_date    : row.trandate,
-                    status_code  : row.status,
-                    status_name  : row.status_name,
-                    ship_address : row.shipaddress,
-                    memo         : row.memo,
-                    last_modified: row.lastmodifieddate
+                    id           : String(r.id),
+                    tranid       : r.getValue('tranid'),
+                    customer_id  : r.getValue('entity')  || null,
+                    customer_name: r.getText('entity')   || null,
+                    tran_date    : r.getValue('trandate'),
+                    status_code  : r.getValue('status'),
+                    status_name  : r.getText('status'),
+                    ship_address : r.getValue('shipaddress') || null,
+                    memo         : r.getValue('memo')    || null,
+                    last_modified: formatToISO(r.getValue('lastmodifieddate')),
+                    datecreated  : formatToISO(r.getValue('datecreated'))
                 };
             });
 
@@ -192,21 +168,6 @@ define(['N/query'], function (query) {
                 message: e.message || JSON.stringify(e)
             };
         }
-    }
-
-    // =========================
-    // 🔥 HELPER: ISO -> MM/DD/YYYY untuk SuiteQL TO_DATE filter
-    // Input : "2026-03-01T00:00:00"
-    // Output: "03/01/2026"
-    // =========================
-    function isoToNsDate(isoStr) {
-        if (!isoStr) return null;
-        var datePart = isoStr.substring(0, 10);  // "2026-03-01"
-        var dp       = datePart.split('-');
-        var year     = dp[0];
-        var month    = dp[1];
-        var day      = dp[2];
-        return month + '/' + day + '/' + year;   // "03/01/2026"
     }
 
     return { post: post };

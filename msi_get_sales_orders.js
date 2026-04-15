@@ -142,7 +142,7 @@ define(['N/search', 'N/query'], (search, query) => {
             // ── Build columns (attach sort to the right column) ───────────────
             const columnDefs = [
                 'tranid', 'entity', 'status', 'trandate',
-                'memo', 'lastmodifieddate'
+                'memo', 'lastmodifieddate', 'datecreated'
             ];
 
             const columns = columnDefs.map(name => {
@@ -204,7 +204,8 @@ define(['N/search', 'N/query'], (search, query) => {
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
                 customer_name : r.getText('entity')                        || null,
                 memo          : r.getValue('memo')                         || null,
-                last_modified : formatToISO(r.getValue('lastmodifieddate')) || null
+                last_modified : formatToISO(r.getValue('lastmodifieddate')) || null,
+                datecreated   : formatToISO(r.getValue('datecreated'))      || null
             }));
 
             // ── Fetch line items via SuiteQL (tl.description tersedia di SuiteQL) ──

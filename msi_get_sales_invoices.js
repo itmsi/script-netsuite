@@ -118,6 +118,7 @@ function formatToISO(dateStr) {
                 search.createColumn({ name: 'custbody_cseg_cn_cfi' }),
                 search.createColumn({ name: 'status' }),
                 search.createColumn({ name: 'lastmodifieddate' }),
+                search.createColumn({ name: 'datecreated' }),
                 search.createColumn({ name: 'subsidiarynohierarchy' })
             ];
             
@@ -190,6 +191,7 @@ function formatToISO(dateStr) {
                     custbody_cseg_cn_cfi               : r.getValue('custbody_cseg_cn_cfi') || null,
                     custbody_cseg_cn_cfi_display       : r.getText('custbody_cseg_cn_cfi') || null,
                     last_modified                      : formatToISO(r.getValue('lastmodifieddate')) || null,
+                    datecreated                        : formatToISO(r.getValue('datecreated')) || null,
                     lines                              : []
                 };
             });
