@@ -7,43 +7,42 @@
  *
  * === CONTOH PAYLOAD (POST BODY) ===
  {
-   "id": 12345,                           // Opsional: Isi dengan Internal ID SO jika ingin UPDATE. Kosongkan jika ingin CREATE.
-   "customform": 100,                     // Internal ID custom form (opsional)
-   "subsidiary": 1,                       // Internal ID dari Subsidiary
-   "customerid": 456,                     // Internal ID dari Customer (bisa juga menggunakan key "entity")
-   
-   // --- Header Fields ---
-   "trandate": "1/20/2026",               // Tanggal Transaksi (format string date parsing NetSuite)
-   "startdate": "1/21/2026",              // Tanggal Mulai (format string date)
-   "enddate": "2/20/2026",                // Tanggal Berakhir (format string date)
-   "orderstatus": "A",                    // Status Order (Contoh huruf string A, B, dsb sesuai SO state)
-   "otherrefnum": "PO-9992",              // Nomor Referensi Lain / PO #
+   "id": 7540,                           // Opsional: Isi dengan Internal ID SO jika ingin UPDATE. Kosongkan jika ingin CREATE.
+   "customform": 104,                     // Internal ID custom form (opsional)
+   "subsidiary": 5,                       // Internal ID dari Subsidiary
+   "entity": 1052,                     // Internal ID dari Customer (bisa juga menggunakan key "entity")
+   "trandate": "20/3/2026",               // Tanggal Transaksi (format string date parsing NetSuite)
+   "startdate": "20/3/2026",              // Tanggal Mulai (format string date)
+   "enddate": "23/3/2026",                // Tanggal Berakhir (format string date)
+   "orderstatus": "B",                    // Status Order A = Pending Approval, B = Pending Fullfillment
+   "otherrefnum": "",              // Nomor Referensi Lain / PO #
    "memo": "Catatan untuk SO ini",      
    "currency": 1,                         // Internal ID Mata Uang (Currency)
-   "terms": 2,                            // Internal ID Payment Terms
-   "department": 10,                      // Internal ID Department
-   "class": 12,                           // Internal ID Class
-   "location": 5,                         // Internal ID Location
-   "intercotransaction": 678,             // Internal ID transaksi intercompany
-   
-   // --- Custom Header Fields ---
+   "terms": 9,                            // Internal ID Payment Terms
+   "department": 101,                      // Internal ID Department
+   "class": 3,                           // Internal ID Class
+   "location": 19,                         // Internal ID Location
+//    "intercotransaction": 1,             // Internal ID transaksi intercompany
    "custbody_msi_quotation_no_iec": "QT-001", 
-   "custbody_msi_bank_payment_so": 3,
+   "custbody_msi_bank_payment_so": [3, 5],
    "custbody_cseg_cn_cfi": 4, 
-   "custbody_msi_createdby_api": "T",     // Bisa disesuaikan tipe aslinya (Checkbox=true/false / T/F / String)
-   
-   // --- Items (Baris Sublist) ---
+   "custbody_msi_createdby_api": "T", 
+   "custbody_me_approval_status": 2, // 1 = pending approval, 2 = approved, 3 = Rejected
    "items": [
      {
-       "itemId": 789,                     // Internal ID item (wajib)
+       "itemId": 19593,                     // Internal ID item (wajib)
        "qty": 5,                          // Quantity item (bisa juga "quantity": 5)
-       "rate": 150000,                    // Harga satuan item
-       "amount": 750000,                  // Total Amount
+       "rate": 1500000,                    // Harga satuan item
+       "amount": 7500000,                  // Total Amount
        "description": "Deskripsi Manual", // Deskripsi item
-       "department": 10,                 
-       "class": 12,                      
-       "location": 5,                    
-       "taxcode": 6                       // Internal ID kode pajak
+       "department": 101,                 
+       "class": 3,                      
+       "location": 19,                    
+       "taxcode": 18098,                       // Internal ID kode pajak
+       "custcol_me_tier_price": 100000,   // Harga tier
+       "custcol_msi_booking_fee_so": 5000000, // Booking fee msi - booking fee -> khusus iec dan msi kalau iel auto 0
+       "custcol_msi_down_payment_percent": 30, // Persentase uang muka (%) msi - down payment persen dan 
+       "custcol_msi_down_payment_amount": 30000000 // Nominal uang muka msi - down payment amount
      }
    ]
  }
@@ -173,8 +172,11 @@ define(['N/record','N/format'], function (record, format) {
                 so.setValue({ fieldId: 'custbody_msi_quotation_no_iec', value: context.custbody_msi_quotation_no_iec });
             }
 
-            if (context.custbody_msi_bank_payment_so) {
-                so.setValue({ fieldId: 'custbody_msi_bank_payment_so', value: context.custbody_msi_bank_payment_so });
+            if (context.custbody_msi_bank_payment_so !== undefined && context.custbody_msi_bank_payment_so !== null) {
+                var bankPaymentVal = Array.isArray(context.custbody_msi_bank_payment_so)
+                    ? context.custbody_msi_bank_payment_so
+                    : [context.custbody_msi_bank_payment_so];
+                so.setValue({ fieldId: 'custbody_msi_bank_payment_so', value: bankPaymentVal });
             }
 
             if (context.custbody_cseg_cn_cfi) {
@@ -195,6 +197,10 @@ define(['N/record','N/format'], function (record, format) {
 
             if (context.custbody_msi_createdby_api !== undefined) {
                 so.setValue({ fieldId: 'custbody_msi_createdby_api', value: context.custbody_msi_createdby_api });
+            }
+
+            if (context.custbody_me_approval_status !== undefined) {
+                so.setValue({ fieldId: 'custbody_me_approval_status', value: context.custbody_me_approval_status });
             }
           
             // ===== ITEMS =====
@@ -301,6 +307,38 @@ define(['N/record','N/format'], function (record, format) {
                             sublistId: 'item',
                             fieldId: 'taxcode',
                             value: payloadItem.taxcode
+                        });
+                    }
+
+                    if (payloadItem.custcol_me_tier_price !== undefined && payloadItem.custcol_me_tier_price !== null) {
+                        so.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'custcol_me_tier_price',
+                            value: payloadItem.custcol_me_tier_price
+                        });
+                    }
+
+                    if (payloadItem.custcol_msi_booking_fee_so !== undefined && payloadItem.custcol_msi_booking_fee_so !== null) {
+                        so.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'custcol_msi_booking_fee_so',
+                            value: payloadItem.custcol_msi_booking_fee_so
+                        });
+                    }
+
+                    if (payloadItem.custcol_msi_down_payment_percent !== undefined && payloadItem.custcol_msi_down_payment_percent !== null) {
+                        so.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'custcol_msi_down_payment_percent',
+                            value: payloadItem.custcol_msi_down_payment_percent
+                        });
+                    }
+
+                    if (payloadItem.custcol_msi_down_payment_amount !== undefined && payloadItem.custcol_msi_down_payment_amount !== null) {
+                        so.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'custcol_msi_down_payment_amount',
+                            value: payloadItem.custcol_msi_down_payment_amount
                         });
                     }
 
