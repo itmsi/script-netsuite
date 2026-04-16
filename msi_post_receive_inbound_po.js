@@ -2,6 +2,31 @@
  *@NApiVersion 2.1
  *@NScriptType Restlet
  */
+
+ /*
+ {
+  "idInboundShipment": 31, 
+  "items": [
+    {
+      "po_id": 8443, 
+      "item": 19596,
+      "quantity": 1
+    },
+    {
+      "po_id": 8443, 
+      "item": 19613,
+      "quantity": 1
+    },
+    {
+      "po_id": 8444, 
+      "item": 19602,
+      "quantity": 1
+    }
+  ]
+}
+
+
+ */
 define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
     function receiptInbound(params) {
