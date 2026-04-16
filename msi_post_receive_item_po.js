@@ -5,15 +5,11 @@
 
  /*
  Body request
- {
-  "po_id": 8443, 
+{
+  "po_id": 7228, 
   "items": [
     {
-      "item": 19596,
-      "quantity": 1
-    },
-    {
-      "item": 19613,
+      "item": 19593,
       "quantity": 1
     }
   ]
@@ -31,7 +27,7 @@ define(['N/record', 'N/search'], function (record, search) {
             fromType: record.Type.PURCHASE_ORDER,
             fromId: params.po_id,
             toType: record.Type.ITEM_RECEIPT,
-            isDynamic: false // Mode standard
+            isDynamic: false 
         });
 
         // uncheck semua item dulu — karena NetSuite auto-centang semua saat transform
@@ -84,8 +80,6 @@ define(['N/record', 'N/search'], function (record, search) {
             var currentRemainingQty = loadRec.getSublistValue({ sublistId: 'item', fieldId: 'quantityremaining', line: lineNumber }) || 1;
             var qty = itemData.quantity !== undefined ? itemData.quantity : currentRemainingQty;
 
-            // Berbeda dengan Inbound Shipment yang menggunakan 'quantitytobereceived',
-            // di Receipt standard, field-nya adalah 'quantity'
             loadRec.setSublistValue({
                 sublistId: 'item',
                 fieldId: 'quantity',
@@ -107,7 +101,6 @@ define(['N/record', 'N/search'], function (record, search) {
         }
 
         if (itemChecked === 0) {
-            // Ambil daftar item yang tesedia di sublist untuk keperluan debugging
             var availableItems = [];
             for (var i = 0; i < lineCount; i++) {
                 availableItems.push(loadRec.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i }));
@@ -118,7 +111,7 @@ define(['N/record', 'N/search'], function (record, search) {
                             ", Payload Items: " + JSON.stringify(payloadItems));
         }
 
-        // Karena ini pembuatan Item Receipt langsung, fungsi save() MENGEMBALIKAN INTERNAL ID Item Receipt-nya!
+        // fungsi save() mengembalikan internal ID Item Receipt-nya!
         var irId = loadRec.save();
         
         var grList = [];
@@ -140,8 +133,6 @@ define(['N/record', 'N/search'], function (record, search) {
                 columns: ['tranid']
             });
             
-            // Perhatikan bahwa untuk transaksi, nilai text/string dari tranid seringkali berupa array referensi tunggal di lookupFields
-            // Kita extract nilainya dengan aman:
             if (Array.isArray(poFields.tranid)) {
                 var poNumber = poFields.tranid.length > 0 ? poFields.tranid[0].text : '';
             } else {
