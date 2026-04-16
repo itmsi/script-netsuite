@@ -185,6 +185,7 @@ define(['N/search'], (search) => {
                     total:                             res.getValue('amount'),
                     last_modified:                     formatToISO(res.getValue('lastmodifieddate')),
                     approvalstatus:                    res.getValue('approvalstatus'),
+                    approvalstatus_display:            res.getText('approvalstatus'),
                     custbody_me_wf_created_by:         res.getValue('custbody_me_wf_created_by'),
                     custbody_me_wf_in_delegation:      res.getValue('custbody_me_wf_in_delegation'),
                     custbody_me_delegate_approver:     res.getValue('custbody_me_delegate_approver'),
