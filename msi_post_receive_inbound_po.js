@@ -88,12 +88,31 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             itemChecked++;
         }
 
+        // DAPATKAN DAFTAR PO & GR LAMA SEBELUM SAVE
+        // Tujuannya agar kita bisa membedakan mana GR yang sudah eksis sebelumnya,
+        // dan mana GR yang benar-benar baru terlahir dari proses receive ini.
+        var poResults = query.runSuiteQL({
+            query: 'SELECT DISTINCT purchaseordertransaction AS po_id FROM InboundShipmentItem WHERE inboundshipment = ?',
+            params: [params.idInboundShipment]
+        }).asMappedResults()
+        var poIds = poResults.map(function(r) { return r.po_id })
+
+        var oldGrIds = [];
+        if (poIds.length > 0) {
+            try {
+                var poIdsPlaceholders = poIds.map(function(){ return '?'; }).join(',');
+                var oldSql = "SELECT t.id FROM transaction t JOIN transactionline tl ON t.id = tl.transaction WHERE t.type = 'ItemRcpt' AND tl.createdfrom IN (" + poIdsPlaceholders + ") AND tl.mainline = 'F'";
+                var oldGrResults = query.runSuiteQL({ query: oldSql, params: poIds }).asMappedResults();
+                oldGrIds = oldGrResults.map(function(r) { return r.id });
+            } catch(e) {}
+        }
+
         // kalau tidak ada item yang valid, skip save — langsung query existing GRs
         var savedId = params.idInboundShipment
         if (itemChecked > 0) {
             savedId = loadRec.save()
             
-            // Delay dinamis: 1.5 detik per item yang di-receive
+            // Delay dinamis: 2 detik per item yang di-receive
             var delayTime = itemChecked * 2000;
             var start = new Date().getTime();
             while (new Date().getTime() - start < delayTime) {
@@ -107,14 +126,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             params: [params.idInboundShipment]
         }).asMappedResults()
         var shipmentStatus = shipmentInfo.length > 0 ? shipmentInfo[0].shipmentstatus : null
-
-        // step 1: ambil PO IDs dari InboundShipmentItem
-        var poResults = query.runSuiteQL({
-            query: 'SELECT DISTINCT purchaseordertransaction AS po_id FROM InboundShipmentItem WHERE inboundshipment = ?',
-            params: [params.idInboundShipment]
-        }).asMappedResults()
-
-        var poIds = poResults.map(function(r) { return r.po_id })
 
         var grList = [];
         if (poIds.length > 0) {
@@ -137,6 +148,11 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 var grMap = {};
                 for (var k = 0; k < grResults.length; k++) {
                     var row = grResults[k];
+                    
+                    // Filter wajib: Abaikan GR jika ia sudah ada SEBELUM proses save tadi!
+                    if (oldGrIds.indexOf(row.id) !== -1) {
+                        continue;
+                    }
                     
                     // Karena hasil query sudah ORDER BY t.id DESC (terbaru di atas),
                     // kita cukup mengambil data pertama yang muncul untuk setiap PO.
