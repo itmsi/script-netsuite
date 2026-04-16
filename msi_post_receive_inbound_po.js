@@ -92,6 +92,13 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         var savedId = params.idInboundShipment
         if (itemChecked > 0) {
             savedId = loadRec.save()
+            
+            // Delay dinamis: 1.5 detik per item yang di-receive
+            var delayTime = itemChecked * 2000;
+            var start = new Date().getTime();
+            while (new Date().getTime() - start < delayTime) {
+                // block thread (sleep)
+            }
         }
 
         // ambil status inbound shipment terbaru dari DB
@@ -109,39 +116,43 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
         var poIds = poResults.map(function(r) { return r.po_id })
 
-        // cari Item Receipt dari PO yang linked ke inbound shipment ini
-        // N/search pakai createdfrom filter — reliable untuk GR yang sudah ada
-        // (delay indexing hanya terjadi untuk GR yang baru dibuat di request yang sama)
-        var grList = []
+        var grList = [];
         if (poIds.length > 0) {
             try {
-                var grMap = {}
-                search.create({
-                    type: 'itemreceipt',
-                    filters: [
-                        ['createdfrom', 'anyof', poIds]
-                    ],
-                    columns: [
-                        search.createColumn({ name: 'internalid' }),
-                        search.createColumn({ name: 'tranid' }),
-                        search.createColumn({ name: 'trandate' }),
-                        search.createColumn({ name: 'createdfrom' })
-                    ]
-                }).run().each(function(result) {
-                    if (!grMap[result.id]) {
-                        grMap[result.id] = {
-                            id: result.id,
-                            tranid: result.getValue('tranid'),
-                            trandate: result.getValue('trandate'),
-                            po_id: result.getValue('createdfrom'),
-                            po_number: result.getText('createdfrom')
-                        }
+                // Kita gabung poIds jadi string untuk klausa IN
+                var poIdsPlaceholders = poIds.map(function(){ return '?'; }).join(',');
+                
+                var sql = "SELECT t.id, t.tranid, t.trandate, tl.createdfrom AS po_id, po.tranid AS po_number " +
+                          "FROM transaction t " +
+                          "JOIN transactionline tl ON t.id = tl.transaction " +
+                          "LEFT JOIN transaction po ON tl.createdfrom = po.id " +
+                          "WHERE t.type = 'ItemRcpt' AND tl.createdfrom IN (" + poIdsPlaceholders + ") AND tl.mainline = 'F' " +
+                          "ORDER BY t.id DESC";
+                
+                var grResults = query.runSuiteQL({
+                    query: sql,
+                    params: poIds
+                }).asMappedResults();
+
+                var grMap = {};
+                for (var k = 0; k < grResults.length; k++) {
+                    var row = grResults[k];
+                    
+                    // Karena hasil query sudah ORDER BY t.id DESC (terbaru di atas),
+                    // kita cukup mengambil data pertama yang muncul untuk setiap PO.
+                    if (!grMap[row.po_id]) {
+                        grMap[row.po_id] = {
+                            id: row.id,
+                            tranid: row.tranid,
+                            trandate: row.trandate,
+                            po_id: row.po_id,
+                            po_number: row.po_number || ''
+                        };
                     }
-                    return true
-                })
-                grList = Object.values(grMap)
+                }
+                grList = Object.values(grMap);
             } catch (e) {
-                log.error('error search GR', e.message)
+                log.error('error query GR', e.message);
             }
         }
 
