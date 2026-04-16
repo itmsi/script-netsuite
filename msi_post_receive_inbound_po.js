@@ -4,6 +4,7 @@
  */
 
  /*
+ Body request
  {
   "idInboundShipment": 31, 
   "items": [
