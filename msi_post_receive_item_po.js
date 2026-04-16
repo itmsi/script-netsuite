@@ -6,10 +6,11 @@
  /*
  Body request
 {
-  "po_id": 7228, 
+  "po_id": 7228,
+  "memo": "standart item receipt",
   "items": [
     {
-      "item": 19593,
+      "item": 19611,
       "quantity": 1
     }
   ]
@@ -29,6 +30,14 @@ define(['N/record', 'N/search'], function (record, search) {
             toType: record.Type.ITEM_RECEIPT,
             isDynamic: false 
         });
+
+        // Set field memo jika dikirim pada payload
+        if (params.memo) {
+            loadRec.setValue({
+                fieldId: 'memo',
+                value: params.memo
+            });
+        }
 
         // uncheck semua item dulu — karena NetSuite auto-centang semua saat transform
         var lineCount = loadRec.getLineCount({ sublistId: 'item' });
