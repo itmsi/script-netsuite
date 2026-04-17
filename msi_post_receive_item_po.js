@@ -8,10 +8,19 @@
 {
   "po_id": 7228,
   "memo": "standart item receipt",
+  "customform": 115,     // opsional: ID custom form
+  "trandate": "2026-04-17", // opsional: format tanggal ISO atau string date
+  "class": 2,            // opsional: ID class header
+  "location": 19,        // opsional: ID location header
+  "department": 6,       // opsional: ID department header
   "items": [
     {
       "item": 19611,
-      "quantity": 1
+      "quantity": 1,
+      "location": 19,    // opsional: ID To Location line
+      "department": 6,   // opsional: ID department line
+      "class": 2,        // opsional: ID class line
+      "rate": 150000     // opsional: set rate/harga line
     }
   ]
 }
@@ -31,12 +40,36 @@ define(['N/record', 'N/search'], function (record, search) {
             isDynamic: false 
         });
 
-        // Set field memo jika dikirim pada payload
-        if (params.memo) {
-            loadRec.setValue({
-                fieldId: 'memo',
-                value: params.memo
-            });
+        // Set field header dasar
+        var bodyFields = ['memo', 'customform', 'class', 'location', 'department'];
+        bodyFields.forEach(function(field) {
+            if (params[field] !== undefined && params[field] !== null) {
+                loadRec.setValue({ fieldId: field, value: params[field] });
+            }
+        });
+
+        // Set trandate khusus (perlu object Date)
+        if (params.trandate) {
+            var inputDate = params.trandate;
+            var d = new Date(inputDate);
+            
+            // Coba parse manual kalau JS Date gagal (misal "16-04-2026")
+            if (isNaN(d.getTime())) {
+                var parts = inputDate.split(/[-/]/); // support pemisah '-' atau '/'
+                if (parts.length === 3) {
+                    if (parts[0].length === 4) {
+                        // format YYYY-MM-DD
+                        d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                    } else if (parts[2].length === 4) {
+                        // format DD-MM-YYYY
+                        d = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+                    }
+                }
+            }
+            
+            if (!isNaN(d.getTime())) {
+                loadRec.setValue({ fieldId: 'trandate', value: d });
+            }
         }
 
         // uncheck semua item dulu — karena NetSuite auto-centang semua saat transform
@@ -96,15 +129,20 @@ define(['N/record', 'N/search'], function (record, search) {
                 value: qty
             });
             
-            // Catatan: Jika location dibutuhkan, bisa ditambahkan di sini
-            if (itemData.location) {
-                loadRec.setSublistValue({
-                    sublistId: 'item',
-                    fieldId: 'location',
-                    line: lineNumber,
-                    value: itemData.location
-                });
-            }
+            // Set info detail per line item
+            var lineFields = ['location', 'department', 'class', 'rate'];
+            lineFields.forEach(function(f) {
+                if (itemData[f] !== undefined && itemData[f] !== null) {
+                    // Di Item Receipt, term/field internal-nya adalah 'unitcost', bukan 'rate'
+                    var nsFieldId = (f === 'rate') ? 'unitcost' : f;
+                    loadRec.setSublistValue({
+                        sublistId: 'item',
+                        fieldId: nsFieldId,
+                        line: lineNumber,
+                        value: itemData[f]
+                    });
+                }
+            });
             
             itemChecked++;
         }
