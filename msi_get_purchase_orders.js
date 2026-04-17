@@ -28,7 +28,7 @@
 }
  */
 
-define(['N/search'], (search) => {
+define(['N/search', 'N/query'], (search, query) => {
        function formatToISO(dateStr) {
             if (!dateStr) return null;
 
@@ -278,9 +278,56 @@ define(['N/search'], (search) => {
                 });
             }
 
-            // ── Gabungkan header + lines ───────────────────────────────────────
+            // ── Ambil Data Inbound Shipment via SuiteQL ──────────────────────
+            let poShipmentMap = {};
+            let lineShipmentMap = {};
+            if (foundPoIds.length > 0) {
+                try {
+                    let sql = `
+                        SELECT 
+                            isi.purchaseordertransaction as po_id, 
+                            tl.linesequencenumber as line_seq,
+                            BUILTIN.DF(isi.inboundshipment) as shipment_number 
+                        FROM 
+                            InboundShipmentItem isi
+                        JOIN 
+                            TransactionLine tl ON isi.shipmentitemtransaction = tl.uniquekey
+                        WHERE 
+                            isi.purchaseordertransaction IN (${foundPoIds.join(',')})
+                    `;
+                    let queryResults = query.runSuiteQL({ query: sql }).asMappedResults();
+                    queryResults.forEach(r => {
+                        // Untuk Header (summary)
+                        if (!poShipmentMap[r.po_id]) poShipmentMap[r.po_id] = [];
+                        if (r.shipment_number && poShipmentMap[r.po_id].indexOf(r.shipment_number) === -1) {
+                            poShipmentMap[r.po_id].push(r.shipment_number);
+                        }
+                        
+                        // Untuk per-Line
+                        let lineKey = r.po_id + '_' + r.line_seq;
+                        lineShipmentMap[lineKey] = r.shipment_number;
+                    });
+                } catch (e) {
+                    // Jika query gagal, biarkan kosong
+                }
+            }
+
+            // ── Gabungkan header + lines + shipments ──────────────────────────
             let data = pagedHeaders.map(header => {
-                header.lines = linesByPo[header.po_id] || [];
+                let lines = linesByPo[header.po_id] || [];
+                
+                // Map shipment ke tiap line
+                lines.map(line => {
+                    let lineKey = header.po_id + '_' + line.linesequencenumber;
+                    let shipmentNumber = lineShipmentMap[lineKey] || null;
+                    line.inbound_shipment_number = shipmentNumber;
+                    line.has_inbound = !!shipmentNumber;
+                    return line;
+                });
+
+                header.lines = lines;
+                header.inbound_shipment_numbers = poShipmentMap[header.po_id] || [];
+                header.has_inbound = header.inbound_shipment_numbers.length > 0;
                 return header;
             });
 
