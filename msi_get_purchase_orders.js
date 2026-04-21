@@ -231,7 +231,7 @@ define(['N/search', 'N/query'], (search, query) => {
                         ['shipping', 'is', 'F']
                     ],
                     columns: [
-                        'internalid', 'line', 'item', 'itemtype', 'quantity', 'quantitybilled', 
+                        'internalid', 'line', 'lineuniquekey', 'item', 'itemtype', 'quantity', 'quantitybilled', 
                         'rate', 'amount', 'taxamount', 'taxcode', 'memo', 
                         'location', 'department', 'class', 
                         'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost'
@@ -245,6 +245,7 @@ define(['N/search', 'N/query'], (search, query) => {
                     linesByPo[poId].push({
                         transaction:        poId,
                         linesequencenumber: res.getValue('line'),
+                        line_id:            res.getValue('lineuniquekey') ,
                         item:               res.getValue('item'),
                         item_display:       res.getText('item'),
                         itemtype:           res.getValue('itemtype'),
@@ -285,8 +286,9 @@ define(['N/search', 'N/query'], (search, query) => {
                 try {
                     let sql = `
                         SELECT 
+                            isi.id as shipment_item_id,
                             isi.purchaseordertransaction as po_id, 
-                            tl.linesequencenumber as line_seq,
+                            tl.uniquekey as line_uniquekey,
                             BUILTIN.DF(isi.inboundshipment) as shipment_number 
                         FROM 
                             InboundShipmentItem isi
@@ -304,8 +306,10 @@ define(['N/search', 'N/query'], (search, query) => {
                         }
                         
                         // Untuk per-Line
-                        let lineKey = r.po_id + '_' + r.line_seq;
-                        lineShipmentMap[lineKey] = r.shipment_number;
+                        lineShipmentMap[r.line_uniquekey] = {
+                            id:     r.shipment_item_id,
+                            number: r.shipment_number
+                        };
                     });
                 } catch (e) {
                     // Jika query gagal, biarkan kosong
@@ -318,10 +322,10 @@ define(['N/search', 'N/query'], (search, query) => {
                 
                 // Map shipment ke tiap line
                 lines.map(line => {
-                    let lineKey = header.po_id + '_' + line.linesequencenumber;
-                    let shipmentNumber = lineShipmentMap[lineKey] || null;
-                    line.inbound_shipment_number = shipmentNumber;
-                    line.has_inbound = !!shipmentNumber;
+                    let shipmentData = lineShipmentMap[line.line_id] || null; // line_id berisi lineuniquekey
+                    line.inbound_shipment_number  = shipmentData ? shipmentData.number : null;
+                    line.inbound_shipment_line_id = shipmentData ? shipmentData.id : null;
+                    line.has_inbound = !!shipmentData;
                     return line;
                 });
 
