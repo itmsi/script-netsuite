@@ -12,6 +12,17 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         })
 
         /* inserting body sample
+
+        {
+        "idInboundShipment": 37,
+        "items": [
+            {
+            "line_id": 64,     // Internal ID of InboundShipmentItem
+            "item": 22253,       // Item Internal ID
+            "po_id": 12387      // PO Internal ID
+            }
+        ]
+        }
         
             loadRec.setValue('trandate',valueDate)
             trandate = field id
@@ -45,7 +56,7 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
  Currency = currency
  Incoterm = incoterm
  Ownership Transfer = ownershiptransfer
- Unique Key = uniquekey
+ Unique Key = id
  Item Source = origline
  Exchange Rate = exchangerate
  Quantity Remaining = quantityremaining
@@ -80,16 +91,41 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
         // loop item dari payload
         var itemChecked = 0
+
         for (var x = 0; x < params.items.length; x++) {
             var itemData = params.items[x]
+            var foundLine = -1
 
-            var lineNumber = loadRec.findSublistLineWithValue({
-                sublistId: 'receiveitems',
-                fieldId: 'item',
-                value: itemData.item
-            })
+            for (var i = 0; i < lineCount; i++) {
+                // ambil data dari sublist untuk pencocokan
+                var sublistLineId = loadRec.getSublistValue({ sublistId: 'receiveitems', fieldId: 'id', line: i })
+                var sublistItem = loadRec.getSublistValue({ sublistId: 'receiveitems', fieldId: 'item', line: i })
+                var sublistPO = loadRec.getSublistValue({ sublistId: 'receiveitems', fieldId: 'purchaseorder', line: i })
+                var isChecked = loadRec.getSublistValue({ sublistId: 'receiveitems', fieldId: 'receiveitem', line: i })
 
-            if (lineNumber === -1) {
+                // skip kalau baris ini sudah tercentang oleh item sebelumnya di payload
+                if (isChecked) continue
+
+                // Cocokkan semua kriteria yang dikirim di payload (Composite Matching)
+                var isMatch = true
+                
+                // Jika line_id dikirim, wajib cocok dengan field id sublist
+                if (itemData.line_id && itemData.line_id != sublistLineId) isMatch = false
+                
+                // Jika item dikirim, wajib cocok
+                if (itemData.item && itemData.item != sublistItem) isMatch = false
+                
+                // Jika po_id dikirim, wajib cocok
+                if (itemData.po_id && itemData.po_id != sublistPO) isMatch = false
+
+                // Jika semua kriteria yang ada cocok, ambil baris ini
+                if (isMatch) {
+                    foundLine = i
+                    break
+                }
+            }
+
+            if (foundLine === -1) {
                 continue
             }
 
@@ -97,19 +133,19 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             loadRec.setSublistValue({
                 sublistId: 'receiveitems',
                 fieldId: 'receiveitem',
-                line: lineNumber,
+                line: foundLine,
                 value: true
             })
 
             // qty dari payload, kalau tidak ada pakai quantitytobereceived (full receive)
             var qty = itemData.quantity !== undefined
                 ? itemData.quantity
-                : loadRec.getSublistValue({ sublistId: 'receiveitems', fieldId: 'quantitytobereceived', line: lineNumber })
+                : loadRec.getSublistValue({ sublistId: 'receiveitems', fieldId: 'quantitytobereceived', line: foundLine })
 
             loadRec.setSublistValue({
                 sublistId: 'receiveitems',
                 fieldId: 'quantity',
-                line: lineNumber,
+                line: foundLine,
                 value: qty
             })
             itemChecked++
@@ -117,8 +153,13 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
         // kalau tidak ada item yang valid, skip save — langsung query existing GRs
         var savedId = params.idInboundShipment
+
         if (itemChecked > 0) {
-            savedId = loadRec.save()
+            try {
+                savedId = loadRec.save()
+            } catch (saveError) {
+                throw saveError
+            }
         }
 
         // ambil status inbound shipment terbaru dari DB
@@ -146,7 +187,9 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 search.create({
                     type: 'itemreceipt',
                     filters: [
-                        ['createdfrom', 'anyof', poIds]
+                        ['createdfrom', 'anyof', poIds],
+                        'AND',
+                        ['item', 'anyof', params.items.map(function(item) { return item.item })]
                     ],
                     columns: [
                         search.createColumn({ name: 'internalid' }),
