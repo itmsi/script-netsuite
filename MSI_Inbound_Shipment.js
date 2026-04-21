@@ -144,9 +144,11 @@ define(['N/query'], (query) => {
                     s.vesselnumber,
                     s.billoflading,
                     s.shipmentcreateddate,
-                    s.lastmodifieddate,
+                    TO_CHAR(s.lastmodifieddate, 'YYYY-MM-DD HH24:MI:SS') AS lastmodifieddate,
                     s.custrecord_me_port,
                     isi.id AS item_line_id,
+                    tl.item AS item_id,
+                    BUILTIN.DF(tl.item) AS item_name,
                     isi.purchaseordertransaction AS po_id,
                     t.tranid AS po_number,
                     isi.shipmentitemdescription AS item_description,
@@ -169,6 +171,10 @@ define(['N/query'], (query) => {
                     Transaction t
                 ON
                     isi.purchaseordertransaction = t.id
+                LEFT JOIN
+                    TransactionLine tl
+                ON
+                    tl.uniquekey = isi.shipmentitemtransaction
                 ${whereClause}
                 ORDER BY ${sortBy} ${sortOrder}
             `;
@@ -197,7 +203,7 @@ define(['N/query'], (query) => {
                         vessel_number: r.vesselnumber,
                         bill_of_lading: r.billoflading,
                         date_created: r.shipmentcreateddate,
-                        last_modified: formatToISO(r.lastmodifieddate),
+                        last_modified: r.lastmodifieddate ? r.lastmodifieddate.replace(' ', 'T') + '+07:00' : null,
                         port: r.custrecord_me_port,
                         items: []
                     });
@@ -206,6 +212,8 @@ define(['N/query'], (query) => {
                 if (r.item_line_id) {
                     shipments.get(r.id).items.push({
                         line_id: r.item_line_id,
+                        item_id: r.item_id,
+                        item_name: r.item_name,
                         po_id: r.po_id,
                         po_number: r.po_number,
                         item_description: r.item_description,
