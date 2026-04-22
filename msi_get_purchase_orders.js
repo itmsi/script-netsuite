@@ -231,9 +231,9 @@ define(['N/search', 'N/query'], (search, query) => {
                         ['shipping', 'is', 'F']
                     ],
                     columns: [
-                        'internalid', 'line', 'lineuniquekey', 'item', 'itemtype', 'quantity', 'quantitybilled', 
+                        'internalid', 'line', 'lineuniquekey', 'item', 'itemtype', 'quantity','quantityshiprecv', 'quantitybilled', 
                         'rate', 'amount', 'taxamount', 'taxcode', 'memo', 
-                        'location', 'department', 'class', 
+                        'location', 'department', 'class',
                         'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost'
                     ]
                 });
@@ -244,13 +244,14 @@ define(['N/search', 'N/query'], (search, query) => {
 
                     linesByPo[poId].push({
                         transaction:        poId,
-                        linesequencenumber: res.getValue('line'),
+                        linesequencenumber: Number(res.getValue('line')),
                         line_id:            res.getValue('lineuniquekey') ,
                         item:               res.getValue('item'),
                         item_display:       res.getText('item'),
                         itemtype:           res.getValue('itemtype'),
                         quantity:           res.getValue('quantity'),
                         quantitybilled:     res.getValue('quantitybilled'),
+                        quantityreceived:   res.getValue('quantityshiprecv'),
                         rate:               res.getValue('rate'),
                         netamount:          res.getValue('amount'),
                         tax1amt:            Math.abs(res.getValue('taxamount')),
@@ -278,6 +279,47 @@ define(['N/search', 'N/query'], (search, query) => {
                     return true;
                 });
             }
+ 
+             // ── Search User Notes ─────────────────────────────────────────────
+             let notesByPo = {};
+             if (foundPoIds.length > 0) {
+                 let noteSearch = search.create({
+                     type: 'note',
+                     filters: [
+                         search.createFilter({
+                             name: 'internalid',
+                             join: 'transaction',
+                             operator: search.Operator.ANYOF,
+                             values: foundPoIds
+                         })
+                     ],
+                     columns: [
+                         'internalid',
+                         search.createColumn({ name: 'internalid', join: 'transaction' }), 
+                         'title', 'note', 'notedate', 'author', 'direction', 'notetype'
+                     ]
+                 });
+ 
+                 let processedNoteIds = {};
+                 noteSearch.run().each(res => {
+                     let noteRecordId = res.id;
+                     if (processedNoteIds[noteRecordId]) return true;
+                     processedNoteIds[noteRecordId] = true;
+
+                     let poId = res.getValue({ name: 'internalid', join: 'transaction' });
+                     if (!notesByPo[poId]) notesByPo[poId] = [];
+ 
+                     notesByPo[poId].push({
+                         title:     res.getValue('title'),
+                         note:      res.getValue('note'),
+                         date:      res.getValue('notedate'),
+                         author:    res.getText('author'),
+                         direction: res.getValue('direction'),
+                         type:      res.getText('notetype')
+                     });
+                     return true;
+                 });
+             }
 
             // ── Ambil Data Inbound Shipment via SuiteQL ──────────────────────
             let poShipmentMap = {};
@@ -332,6 +374,7 @@ define(['N/search', 'N/query'], (search, query) => {
                 header.lines = lines;
                 header.inbound_shipment_numbers = poShipmentMap[header.po_id] || [];
                 header.has_inbound = header.inbound_shipment_numbers.length > 0;
+                header.user_notes = notesByPo[header.po_id] || [];
                 return header;
             });
 
