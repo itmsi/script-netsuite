@@ -322,7 +322,6 @@ define(['N/search', 'N/query'], (search, query) => {
              }
 
             // ── Ambil Data Inbound Shipment via SuiteQL ──────────────────────
-            let poShipmentMap = {};
             let lineShipmentMap = {};
             if (foundPoIds.length > 0) {
                 try {
@@ -341,12 +340,6 @@ define(['N/search', 'N/query'], (search, query) => {
                     `;
                     let queryResults = query.runSuiteQL({ query: sql }).asMappedResults();
                     queryResults.forEach(r => {
-                        // Untuk Header (summary)
-                        if (!poShipmentMap[r.po_id]) poShipmentMap[r.po_id] = [];
-                        if (r.shipment_number && poShipmentMap[r.po_id].indexOf(r.shipment_number) === -1) {
-                            poShipmentMap[r.po_id].push(r.shipment_number);
-                        }
-                        
                         // Untuk per-Line
                         lineShipmentMap[r.line_uniquekey] = {
                             id:     r.shipment_item_id,
@@ -372,8 +365,6 @@ define(['N/search', 'N/query'], (search, query) => {
                 });
 
                 header.lines = lines;
-                header.inbound_shipment_numbers = poShipmentMap[header.po_id] || [];
-                header.has_inbound = header.inbound_shipment_numbers.length > 0;
                 header.user_notes = notesByPo[header.po_id] || [];
                 return header;
             });

@@ -15,7 +15,8 @@
   "department": 6,       // opsional: ID department header
   "items": [
     {
-      "item": 19611,
+      "line_sequence": 1,   // WAJIB: linesequencenumber dari GET PO response
+      "item": 19611,         // opsional: validasi ganda item ID (dari field 'item' GET PO response)
       "quantity": 1,
       "location": 19,    // opsional: ID To Location line
       "department": 6,   // opsional: ID department line
@@ -83,31 +84,44 @@ define(['N/record', 'N/search'], function (record, search) {
             });
         }
 
-        // loop item dari payload
+        // pre-build lookup map dari sublist
+        // key: orderline (= linesequencenumber PO) → value: { index, item }
+        var lineMap = {};
+        for (var j = 0; j < lineCount; j++) {
+            var isChecked = loadRec.getSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: j });
+            if (isChecked) continue;
+            var orderline = String(loadRec.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: j }));
+            var itemId    = String(loadRec.getSublistValue({ sublistId: 'item', fieldId: 'item',      line: j }));
+            lineMap[orderline] = { index: j, item: itemId };
+        }
+
+        // Loop payload — lookup O(1) jika line_key_id dikirim, fallback scan jika tidak
         var itemChecked = 0;
-        var processedLines = {}; // Mencegah line yang sama di-receive 2 kali
 
         for (var x = 0; x < params.items.length; x++) {
             var itemData = params.items[x];
             var lineNumber = -1;
-            
-            // Cari line yang item-nya cocok secara manual
-            for (var j = 0; j < lineCount; j++) {
-                var lineItem = loadRec.getSublistValue({
-                    sublistId: 'item',
-                    fieldId: 'item',
-                    line: j
-                });
 
-                if (lineItem == itemData.item && !processedLines[j]) {
-                    lineNumber = j;
-                    processedLines[j] = true;
-                    break;
+            if (itemData.line_sequence === undefined || itemData.line_sequence === null) {
+                throw new Error("Item index " + x + " tidak memiliki 'line_sequence'. Field ini wajib dikirim (nilai dari linesequencenumber GET PO).");
+            }
+
+            // direct hit via orderline — O(1)
+            var matched = lineMap[String(itemData.line_sequence)];
+            if (matched !== undefined) {
+                // validasi ganda item ID jika dikirim di payload
+                if (itemData.item && String(itemData.item) !== matched.item) {
+                    throw new Error("Item index " + x + ": line_sequence " + itemData.line_sequence +
+                                    " ditemukan tapi item tidak cocok. Ekspektasi: " + matched.item +
+                                    ", dikirim: " + itemData.item);
                 }
+                lineNumber = matched.index;
+                delete lineMap[String(itemData.line_sequence)];
             }
 
             if (lineNumber === -1) {
-                continue; // Item tidak ditemukan di PO ini atau sudah terproses
+                throw new Error("Item line_sequence " + itemData.line_sequence +
+                                    " tidak ditemukan atau sudah habis.");
             }
 
             // centang receive
@@ -119,8 +133,17 @@ define(['N/record', 'N/search'], function (record, search) {
             });
 
             // Tentukan quantity. Default-nya ambil sisa qty yang belum di-receive (quantityremaining)
-            var currentRemainingQty = loadRec.getSublistValue({ sublistId: 'item', fieldId: 'quantityremaining', line: lineNumber }) || 1;
-            var qty = itemData.quantity !== undefined ? itemData.quantity : currentRemainingQty;
+            var currentRemainingQty = loadRec.getSublistValue({ sublistId: 'item', fieldId: 'quantityremaining', line: lineNumber });
+            
+            if (itemData.quantity !== undefined && itemData.quantity !== null) {
+                if (parseFloat(itemData.quantity) > parseFloat(currentRemainingQty)) {
+                    throw new Error("Kuantitas berlebih untuk line_sequence " + itemData.line_sequence + 
+                                    ". Maksimal yang bisa diterima: " + currentRemainingQty + 
+                                    ", yang dikirim: " + itemData.quantity);
+                }
+            }
+
+            var qty = (itemData.quantity !== undefined && itemData.quantity !== null) ? itemData.quantity : currentRemainingQty;
 
             loadRec.setSublistValue({
                 sublistId: 'item',
@@ -148,14 +171,14 @@ define(['N/record', 'N/search'], function (record, search) {
         }
 
         if (itemChecked === 0) {
-            var availableItems = [];
+            var availableOrderlines = [];
             for (var i = 0; i < lineCount; i++) {
-                availableItems.push(loadRec.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i }));
+                availableOrderlines.push(loadRec.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: i }));
             }
-            var payloadItems = params.items.map(function(itm) { return itm.item; });
-            throw new Error("Tidak ada item valid. lineCount di IR: " + lineCount + 
-                            ", Available Items: " + JSON.stringify(availableItems) + 
-                            ", Payload Items: " + JSON.stringify(payloadItems));
+            var payloadSequences = params.items.map(function(itm) { return itm.line_sequence; });
+            throw new Error("Tidak ada item valid. lineCount di IR: " + lineCount +
+                            ", Available orderline: " + JSON.stringify(availableOrderlines) +
+                            ", Payload line_sequence: " + JSON.stringify(payloadSequences));
         }
 
         // fungsi save() mengembalikan internal ID Item Receipt-nya!
