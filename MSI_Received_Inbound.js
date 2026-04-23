@@ -19,7 +19,11 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             {
             "line_id": 64,     // Internal ID of InboundShipmentItem
             "item": 22253,       // Item Internal ID
-            "po_id": 12387      // PO Internal ID
+            "po_id": 12387,      // PO Internal ID
+            "quantity": 1,       // Optional quantity
+            "inventory_detail": [ // Optional: Required for Serialized/Lot items
+                { "inventory_number": "SN-001", "quantity": 1 }
+            ]
             }
         ]
         }
@@ -148,6 +152,46 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 line: foundLine,
                 value: qty
             })
+
+            // Set Inventory Detail jika ada (untuk Serial/Lot items)
+            if (itemData.inventory_detail && Array.isArray(itemData.inventory_detail)) {
+                var subrec = loadRec.getSublistSubrecord({
+                    sublistId: 'receiveitems',
+                    fieldId: 'inventorydetail',
+                    line: foundLine
+                });
+
+                // Hapus baris existing jika ada (biasanya kosong saat load, tapi untuk jaga-jaga)
+                var existingInvLines = subrec.getLineCount({ sublistId: 'inventoryassignment' });
+                for (var j = existingInvLines - 1; j >= 0; j--) {
+                    subrec.removeLine({ sublistId: 'inventoryassignment', line: j });
+                }
+
+                for (var k = 0; k < itemData.inventory_detail.length; k++) {
+                    var invData = itemData.inventory_detail[k];
+                    subrec.setSublistValue({
+                        sublistId: 'inventoryassignment',
+                        fieldId: 'receiptinventorynumber',
+                        line: k,
+                        value: invData.inventory_number || invData.receiptinventorynumber
+                    });
+                    subrec.setSublistValue({
+                        sublistId: 'inventoryassignment',
+                        fieldId: 'quantity',
+                        line: k,
+                        value: invData.quantity
+                    });
+                    if (invData.binnumber) {
+                        subrec.setSublistValue({
+                            sublistId: 'inventoryassignment',
+                            fieldId: 'binnumber',
+                            line: k,
+                            value: invData.binnumber
+                        });
+                    }
+                }
+            }
+
             itemChecked++
         }
 
