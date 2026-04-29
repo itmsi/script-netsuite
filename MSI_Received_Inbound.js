@@ -197,84 +197,122 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
         // kalau tidak ada item yang valid, skip save — langsung query existing GRs
         var savedId = params.idInboundShipment
+        var isProcess = null
 
-        if (itemChecked > 0) {
-            try {
-                savedId = loadRec.save()
-            } catch (saveError) {
-                throw saveError
-            }
+        // isCheck wajib dikirim di payload
+        if (params.isCheck === undefined || params.isCheck === null) {
+            throw new Error('isCheck is required. Use 0 to process and save, or 1 to check only.')
         }
 
-        // ambil status inbound shipment terbaru dari DB
+        var isCheck = Number(params.isCheck)
+
+        // ambil status inbound shipment terbaru dari DB (diperlukan sebelum keputusan save)
         var shipmentInfo = query.runSuiteQL({
             query: 'SELECT shipmentstatus FROM InboundShipment WHERE id = ?',
             params: [params.idInboundShipment]
         }).asMappedResults()
         var shipmentStatus = shipmentInfo.length > 0 ? shipmentInfo[0].shipmentstatus : null
 
-        // step 1: ambil PO IDs dari InboundShipmentItem
-        var poResults = query.runSuiteQL({
-            query: 'SELECT DISTINCT purchaseordertransaction AS po_id FROM InboundShipmentItem WHERE inboundshipment = ?',
-            params: [params.idInboundShipment]
-        }).asMappedResults()
+        // isCheck = 0               → save
+        // isCheck = 1               → tidak save, hanya cek status:
+        //   status belum received   → isProcess = 'process'  (bisa diproses)
+        //   status sudah received   → isProcess = 'success'  (sudah selesai)
 
-        var poIds = poResults.map(function(r) { return r.po_id })
-
-        // cari Item Receipt dari PO yang linked ke inbound shipment ini
-        // N/search pakai createdfrom filter — reliable untuk GR yang sudah ada
-        // (delay indexing hanya terjadi untuk GR yang baru dibuat di request yang sama)
-        var grList = []
-        if (poIds.length > 0) {
+        if (isCheck === 0 && itemChecked > 0) {
             try {
-                var grMap = {}
-                search.create({
-                    type: 'itemreceipt',
-                    filters: [
-                        ['createdfrom', 'anyof', poIds],
-                        'AND',
-                        ['item', 'anyof', params.items.map(function(item) { return item.item })]
-                    ],
-                    columns: [
-                        search.createColumn({ name: 'internalid' }),
-                        search.createColumn({ name: 'tranid' }),
-                        search.createColumn({ name: 'trandate' }),
-                        search.createColumn({ name: 'createdfrom' })
-                    ]
-                }).run().each(function(result) {
-                    if (!grMap[result.id]) {
-                        grMap[result.id] = {
-                            id: result.id,
-                            tranid: result.getValue('tranid'),
-                            trandate: result.getValue('trandate'),
-                            po_id: result.getValue('createdfrom'),
-                            po_number: result.getText('createdfrom')
-                        }
-                    }
-                    return true
-                })
-                grList = Object.values(grMap)
+                savedId = loadRec.save()
+                isProcess = 'processed'
+            } catch (saveError) {
+                throw saveError
+            }
+        } else if (isCheck === 1) {
+            isProcess = shipmentStatus !== 'received' ? 'process' : 'success'
+        }
+
+
+        // Ambil po_id dan item hanya dari payload yang dikirim (unique values)
+        var payloadPoIds = [];
+        var payloadItemIds = [];
+        
+        params.items.forEach(function(item) {
+            if (item.po_id && payloadPoIds.indexOf(item.po_id) === -1) payloadPoIds.push(item.po_id);
+            if (item.item && payloadItemIds.indexOf(item.item) === -1) payloadItemIds.push(item.item);
+        });
+
+        // Cari Item Receipt hanya dari PO dan item yang ada di payload via SuiteQL
+        var grList = [];
+        if (payloadPoIds.length > 0 && payloadItemIds.length > 0) {
+            try {
+                log.debug('GR Search Debug', {
+                    payloadPoIds: payloadPoIds,
+                    payloadItemIds: payloadItemIds,
+                    idInboundShipment: params.idInboundShipment
+                });
+
+                let sql = `
+                    SELECT DISTINCT
+                        t.id,
+                        t.tranid,
+                        t.trandate,
+                        tl.createdfrom as po_id,
+                        BUILTIN.DF(tl.createdfrom) as po_number
+                    FROM
+                        Transaction t
+                    JOIN
+                        TransactionLine tl ON t.id = tl.transaction
+                    JOIN
+                        InboundShipmentItem isi ON tl.createdfrom = isi.purchaseordertransaction
+                    JOIN
+                        TransactionLine tl_po ON tl_po.uniquekey = isi.shipmentitemtransaction
+                    WHERE
+                        t.type = 'ItemRcpt'
+                        AND tl_po.item = tl.item
+                        AND isi.inboundshipment = ${params.idInboundShipment}
+                        AND tl.item IN (${payloadItemIds.join(',')})
+                        AND tl.createdfrom IN (${payloadPoIds.join(',')})
+                `;
+                
+                log.debug('GR Search SQL (V3 - MultiJoin)', sql);
+
+                var queryResults = query.runSuiteQL({ query: sql }).asMappedResults();
+                
+                log.debug('GR Search Results Count', queryResults.length);
+
+                grList = queryResults.map(function(r) {
+                    return {
+                        id: r.id,
+                        tranid: r.tranid,
+                        trandate: r.trandate,
+                        po_id: r.po_id,
+                        po_number: r.po_number
+                    };
+                });
             } catch (e) {
-                log.error('error search GR', e.message)
+                log.error('error search GR via SuiteQL', e.message);
             }
         }
 
         return {
             inboundShipmentId: savedId,
             inboundShipmentStatus: shipmentStatus,
-            goodsReceipts: grList
+            goodsReceipts: grList,
+            isProcess: isProcess
         }
     }
 
     function post(params) {
         try {
             var result = receiptInbound(params)
-            return {
+            var response = {
                 success: true,
                 inbound_shipment_id: result.inboundShipmentId,
                 inbound_shipment_status: result.inboundShipmentStatus,
                 goods_receipts: result.goodsReceipts
             }
+            if (result.isProcess !== null) {
+                response.isProcess = result.isProcess
+            }
+            return response
         } catch (e) {
             return {
                 success: false,
