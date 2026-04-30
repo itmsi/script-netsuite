@@ -28,7 +28,7 @@
 }
  */
 
-define(['N/search', 'N/query'], (search, query) => {
+define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
        function formatToISO(dateStr) {
             if (!dateStr) return null;
 
@@ -321,6 +321,42 @@ define(['N/search', 'N/query'], (search, query) => {
                  });
              }
 
+             // ── Search Custom Attach Files via N/search ───────────────────────
+             let filesByPo = {};
+             if (foundPoIds.length > 0) {
+                 try {
+                     let fileSearch = search.create({
+                         type: 'customrecord_msi_web_url_file',
+                         filters: [
+                             ['custrecord_msi_web_related_transaction', 'anyof', foundPoIds],
+                             'AND',
+                             ['isinactive', 'is', 'F']
+                         ],
+                         columns: [
+                             'internalid',
+                             'custrecord_msi_tittle_url',
+                             'custrecord_msi_web_url',
+                             'custrecord_msi_createdby_api_file',
+                             'custrecord_msi_web_related_transaction'
+                         ]
+                     });
+
+                     fileSearch.run().each(res => {
+                         let poId = res.getValue('custrecord_msi_web_related_transaction');
+                         if (!filesByPo[poId]) filesByPo[poId] = [];
+                         filesByPo[poId].push({
+                             id:              res.id,
+                             title:           res.getValue('custrecord_msi_tittle_url'),
+                             url:             res.getValue('custrecord_msi_web_url'),
+                             created_by_api:  res.getValue('custrecord_msi_createdby_api_file')
+                         });
+                         return true;
+                     });
+                 } catch(e) {
+                     log.error('File Search Error', e.message);
+                 }
+             }
+
             // ── Ambil Data Inbound Shipment via SuiteQL ──────────────────────
             let lineShipmentMap = {};
             if (foundPoIds.length > 0) {
@@ -366,6 +402,7 @@ define(['N/search', 'N/query'], (search, query) => {
 
                 header.lines = lines;
                 header.user_notes = notesByPo[header.po_id] || [];
+                header.files = filesByPo[header.po_id] || [];
                 return header;
             });
 

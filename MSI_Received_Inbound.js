@@ -218,12 +218,16 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         //   status belum received   → isProcess = 'process'  (bisa diproses)
         //   status sudah received   → isProcess = 'success'  (sudah selesai)
 
-        if (isCheck === 0 && itemChecked > 0) {
-            try {
-                savedId = loadRec.save()
-                isProcess = 'processed'
-            } catch (saveError) {
-                throw saveError
+        if (isCheck === 0) {
+            if (shipmentStatus === 'received') {
+                isProcess = 'success'
+            } else if (itemChecked > 0) {
+                try {
+                    savedId = loadRec.save()
+                    isProcess = 'process'
+                } catch (saveError) {
+                    throw saveError
+                }
             }
         } else if (isCheck === 1) {
             isProcess = shipmentStatus !== 'received' ? 'process' : 'success'
@@ -243,12 +247,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         var grList = [];
         if (payloadPoIds.length > 0 && payloadItemIds.length > 0) {
             try {
-                log.debug('GR Search Debug', {
-                    payloadPoIds: payloadPoIds,
-                    payloadItemIds: payloadItemIds,
-                    idInboundShipment: params.idInboundShipment
-                });
-
                 let sql = `
                     SELECT DISTINCT
                         t.id,
@@ -271,12 +269,8 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                         AND tl.item IN (${payloadItemIds.join(',')})
                         AND tl.createdfrom IN (${payloadPoIds.join(',')})
                 `;
-                
-                log.debug('GR Search SQL (V3 - MultiJoin)', sql);
 
                 var queryResults = query.runSuiteQL({ query: sql }).asMappedResults();
-                
-                log.debug('GR Search Results Count', queryResults.length);
 
                 grList = queryResults.map(function(r) {
                     return {
@@ -290,6 +284,10 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             } catch (e) {
                 log.error('error search GR via SuiteQL', e.message);
             }
+        }
+
+        if (isCheck === 1 && grList.length > 0) {
+            isProcess = 'success';
         }
 
         return {
