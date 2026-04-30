@@ -228,9 +228,9 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 } catch (saveError) {
                     throw saveError
                 }
+            } else {
+                isProcess = 'process'
             }
-        } else if (isCheck === 1) {
-            isProcess = shipmentStatus !== 'received' ? 'process' : 'success'
         }
 
 
@@ -253,7 +253,9 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                         t.tranid,
                         t.trandate,
                         tl.createdfrom as po_id,
-                        BUILTIN.DF(tl.createdfrom) as po_number
+                        BUILTIN.DF(tl.createdfrom) as po_number,
+                        tl.item as item_id,
+                        BUILTIN.DF(tl.item) as item_name
                     FROM
                         Transaction t
                     JOIN
@@ -272,22 +274,34 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
 
                 var queryResults = query.runSuiteQL({ query: sql }).asMappedResults();
 
-                grList = queryResults.map(function(r) {
-                    return {
-                        id: r.id,
-                        tranid: r.tranid,
-                        trandate: r.trandate,
-                        po_id: r.po_id,
-                        po_number: r.po_number
-                    };
+                var grMap = {};
+                queryResults.forEach(function(r) {
+                    if (!grMap[r.id]) {
+                        grMap[r.id] = {
+                            id: r.id,
+                            tranid: r.tranid,
+                            trandate: r.trandate,
+                            po_id: r.po_id,
+                            po_number: r.po_number,
+                            items: []
+                        };
+                    }
+                    grMap[r.id].items.push({
+                        item_id: r.item_id,
+                        item_name: r.item_name
+                    });
                 });
+
+                for (var key in grMap) {
+                    grList.push(grMap[key]);
+                }
             } catch (e) {
                 log.error('error search GR via SuiteQL', e.message);
             }
         }
 
         if (isCheck === 1 && grList.length > 0) {
-            isProcess = 'success';
+            isProcess = shipmentStatus !== 'received' ? 'process' : 'success'
         }
 
         return {
