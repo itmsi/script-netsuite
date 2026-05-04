@@ -130,7 +130,32 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
             }
 
             if (foundLine === -1) {
-                continue
+                // Validasi: Cek apakah item benar-benar ada di Inbound Shipment ini
+                var conditions = ['isi.inboundshipment = ' + params.idInboundShipment];
+                if (itemData.line_id) conditions.push('isi.id = ' + itemData.line_id);
+                if (itemData.po_id) conditions.push('isi.purchaseordertransaction = ' + itemData.po_id);
+                if (itemData.item) conditions.push('tl.item = ' + itemData.item);
+
+                var checkSql = 'SELECT isi.quantityexpected, isi.quantityreceived ' + 
+                               'FROM InboundShipmentItem isi ' +
+                               'LEFT JOIN TransactionLine tl ON tl.uniquekey = isi.shipmentitemtransaction ' +
+                               'WHERE ' + conditions.join(' AND ');
+                var checkResults = query.runSuiteQL({ query: checkSql }).asMappedResults();
+
+                if (checkResults.length === 0) {
+                    throw new Error('Item validation failed: Data (line_id: ' + (itemData.line_id || '-') + ', item: ' + (itemData.item || '-') + ', po_id: ' + (itemData.po_id || '-') + ') tidak ditemukan pada Inbound Shipment ini.');
+                } else {
+                    var qtyExp = parseFloat(checkResults[0].quantityexpected) || 0;
+                    var qtyRec = parseFloat(checkResults[0].quantityreceived) || 0;
+                    
+                    if (qtyRec >= qtyExp) {
+                        // Sudah habis terinbound (fully received), jangan digagalkan
+                        continue;
+                    } else {
+                        // Belum fully received tapi tidak muncul di list receiveitems? Gagalkan.
+                        throw new Error('Item (line_id: ' + (itemData.line_id || '-') + ') belum sepenuhnya terinbound tetapi tidak tersedia untuk di-receive pada saat load form. Silakan periksa status dokumen.');
+                    }
+                }
             }
 
             // centang receive
