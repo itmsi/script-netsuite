@@ -322,33 +322,47 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
              }
 
              // ── Search Custom Attach Files via N/search ───────────────────────
+             // Sama seperti notes: filter & column via search.createFilter/createColumn dengan join
              let filesByPo = {};
              if (foundPoIds.length > 0) {
                  try {
+                     // custrecord_msi_transaction_id = Free-Form Text, tidak support ANYOF
+                     // Bangun OR conditions: [id1] OR [id2] OR [id3] ...
+                     let idOrFilters = [];
+                     foundPoIds.forEach((id, i) => {
+                         if (i > 0) idOrFilters.push('OR');
+                         idOrFilters.push(['custrecord_msi_transaction_id', 'is', String(id)]);
+                     });
+
                      let fileSearch = search.create({
                          type: 'customrecord_msi_web_url_file',
                          filters: [
-                             ['custrecord_msi_web_related_transaction', 'anyof', foundPoIds],
+                             idOrFilters,
                              'AND',
                              ['isinactive', 'is', 'F']
                          ],
                          columns: [
-                             'internalid',
-                             'custrecord_msi_tittle_url',
-                             'custrecord_msi_web_url',
-                             'custrecord_msi_createdby_api_file',
-                             'custrecord_msi_web_related_transaction'
+                            'name',
+                            'custrecord_msi_transaction_id',
+                            'custrecord_msi_web_url',
+                            'custrecord_msi_createdby_api_file'
                          ]
                      });
 
+                     let processedFileIds = {};
                      fileSearch.run().each(res => {
-                         let poId = res.getValue('custrecord_msi_web_related_transaction');
+                         let fileRecordId = res.id;
+                         if (processedFileIds[fileRecordId]) return true;
+                         processedFileIds[fileRecordId] = true;
+
+                         let poId = res.getValue('custrecord_msi_transaction_id');
+                         if (!poId) return true;
                          if (!filesByPo[poId]) filesByPo[poId] = [];
                          filesByPo[poId].push({
-                             id:              res.id,
-                             title:           res.getValue('custrecord_msi_tittle_url'),
-                             url:             res.getValue('custrecord_msi_web_url'),
-                             created_by_api:  res.getValue('custrecord_msi_createdby_api_file')
+                             id:             res.id,
+                             name:           res.getValue('name'),
+                             url:            res.getValue('custrecord_msi_web_url'),
+                             created_by_api: res.getValue('custrecord_msi_createdby_api_file')
                          });
                          return true;
                      });
@@ -402,7 +416,8 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
 
                 header.lines = lines;
                 header.user_notes = notesByPo[header.po_id] || [];
-                header.files = filesByPo[header.po_id] || [];
+                // filesByPo di-key dengan String(po_id) agar cocok dengan custrecord_msi_transaction_id
+                header.files = filesByPo[String(header.po_id)] || [];
                 return header;
             });
 
