@@ -1,6 +1,24 @@
 /**
- *@NApiVersion 2.1
- *@NScriptType Restlet
+ * @NApiVersion 2.1
+ * @NScriptType Restlet
+ *
+ * GET data Vendor dengan pagination & filters.
+ *
+ * POST body:
+ {
+   "page": 1,               // Halaman (default: 1)
+   "page_size": 50,         // Jumlah data per halaman (default: 50)
+   "sort_by": "lastmodified", // Field untuk sorting (default: lastmodified)
+   "sort_order": "DESC",    // ASC atau DESC (default: DESC)
+   "filters": {
+     "internalid": [1, 2],        // Filter by internal ID (opsional, bisa array)
+     "entityid": "VEND-001",      // Filter by Entity ID (opsional)
+     "companyname": "PT Vendor",  // Filter by Company Name (opsional, support contains)
+     "email": "[EMAIL_ADDRESS]", // Filter by Email (opsional)
+     "phone": "08123456789",       // Filter by Phone (opsional)
+     "lastmodified": "2026-03-31T23:59:00+07:00" // Filter tanggal diubah (opsional)
+   }
+ }
  */
 
 define(['N/search'], (search) => {
@@ -65,56 +83,77 @@ define(['N/search'], (search) => {
 
     function post(requestBody) {
 
-        const pageSize = parseInt(requestBody.pageSize) || 50;
-        const pageIndex = parseInt(requestBody.pageIndex) || 0;
-        const lastModified = isoToNetSuiteDate(requestBody.lastmodified) || null;
+        let page = parseInt(requestBody.page) || 1;
+        let pageSize = parseInt(requestBody.pageSize || requestBody.page_size) || 50;
+        let sortBy = requestBody.sort_by || 'lastmodifieddate';
+        let sortOrder = (requestBody.sort_order || 'DESC').toUpperCase() === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
+        
+        let filtersBody = requestBody.filters || {};
+        let lastModified = isoToNetSuiteDate(filtersBody.lastmodified) || null;
 
        // Base filter: active vendors only
         let filters = [["isinactive", "is", "F"]];
 
         // Add last modified filter
         if (lastModified) {
-            filters = [
-                ["isinactive", "is", "F"],
-                "AND",
-                ["lastmodifieddate", "onorafter", lastModified]
-            ];
+            filters.push("AND", ["lastmodifieddate", "onorafter", lastModified]);
+        }
+
+        if (filtersBody.internalid) {
+            filters.push("AND", ["internalid", "anyof", filtersBody.internalid]);
+        }
+        if (filtersBody.entityid) {
+            filters.push("AND", ["entityid", "is", filtersBody.entityid]);
+        }
+        if (filtersBody.companyname) {
+            filters.push("AND", ["companyname", "contains", filtersBody.companyname]);
+        }
+        if (filtersBody.email) {
+            filters.push("AND", ["email", "is", filtersBody.email]);
+        }
+        if (filtersBody.phone) {
+            filters.push("AND", ["phone", "is", filtersBody.phone]);
+        }
+
+        let columns = [
+            "internalid",
+            "entityid",
+            "companyname",
+            "email",
+            "phone",
+            "subsidiarynohierarchy",
+            "lastmodifieddate"
+        ].map(col => col === sortBy ? search.createColumn({ name: col, sort: sortOrder }) : col);
+
+        if (!["internalid", "entityid", "companyname", "email", "phone", "subsidiarynohierarchy", "lastmodifieddate"].includes(sortBy)) {
+             columns.push(search.createColumn({ name: sortBy, sort: sortOrder }));
         }
 
         // Vendor search
         const vendorSearch = search.create({
             type: search.Type.VENDOR,
             filters: filters,
-            columns: [
-                "internalid",
-                "entityid",
-                "companyname",
-                "email",
-                "phone",
-                "subsidiarynohierarchy",
-                search.createColumn({
-                    name: 'lastmodifieddate',
-                    sort: search.Sort.DESC
-                })
-            ]
+            columns: columns
         });
 
         // Paging
         const pagedData = vendorSearch.runPaged({ pageSize });
 
-        if (pageIndex >= pagedData.pageRanges.length) {
+        if (pagedData.count === 0 || page > pagedData.pageRanges.length) {
             return {
-                success: false,
-                message: "Invalid pageIndex",
+                success: true,
+                page: page,
+                pageSize: pageSize,
                 totalRows: pagedData.count,
-                totalPages: pagedData.pageRanges.length
+                totalPages: pagedData.pageRanges.length,
+                data: []
             };
         }
 
-        const page = pagedData.fetch({ index: pageIndex });
+        const searchPage = pagedData.fetch({ index: page - 1 });
 
         // Map result
-        const data = page.data.map(result => ({
+        const data = searchPage.data.map(result => ({
             internalId: result.getValue("internalid"),
             entityId: result.getValue("entityid"),
             companyName: result.getValue("companyname"),
@@ -128,8 +167,8 @@ define(['N/search'], (search) => {
 
         return {
             success: true,
-            pageIndex,
-            pageSize,
+            page: page,
+            pageSize: pageSize,
             totalRows: pagedData.count,
             totalPages: pagedData.pageRanges.length,
             data

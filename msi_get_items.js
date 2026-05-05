@@ -1,6 +1,22 @@
 /**
  * @NApiVersion 2.1
  * @NScriptType Restlet
+ *
+ * GET data Item beserta lokasi dengan pagination & filters.
+ *
+ * POST body:
+ {
+   "page": 1,               // Halaman (default: 1)
+   "page_size": 50,         // Jumlah data per halaman (default: 50)
+   "sort_by": "lastmodified",   // Field untuk sorting (default: lastmodified)
+   "sort_order": "DESC",    // ASC atau DESC (default: DESC)
+   "filters": {
+     "lastmodified": "2026-03-31T23:59:00+07:00", // Filter tanggal diubah (opsional)
+     "internalid": [1, 2],        // Filter by internal ID (opsional, bisa array)
+     "itemid": "ITEM-001",        // Filter by Item ID (opsional)
+     "displayname": "Laptop",     // Filter by Display Name (opsional, support contains)
+   }
+ }
  */
 define(['N/search'], (search) => {
 
@@ -62,9 +78,20 @@ define(['N/search'], (search) => {
 
     function post(requestBody) {
 
-        const pageSize = parseInt(requestBody.pageSize) || 50;
-        const pageIndex = parseInt(requestBody.pageIndex) || 0;
-        const lastModified = isoToNetSuiteDate(requestBody.lastmodified) || null;
+        let page = parseInt(requestBody.page) || 1;
+        let pageSize = parseInt(requestBody.pageSize || requestBody.page_size) || 50;
+        
+        let sortMap = {
+            'lastmodified': 'modified',
+            'lastmodifieddate': 'modified'
+        };
+        let rawSortBy = requestBody.sort_by || 'lastmodified';
+        let sortBy = sortMap[rawSortBy] || rawSortBy;
+        
+        let sortOrder = (requestBody.sort_order || 'DESC').toUpperCase() === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
+        
+        let filtersBody = requestBody.filters || {};
+        let lastModified = isoToNetSuiteDate(filtersBody.lastmodified) || null;
 
         // Only active items
         let filters = [
@@ -72,41 +99,52 @@ define(['N/search'], (search) => {
         ];
 
         if (lastModified) {
-            filters = [
-                ["isinactive", "is", "F"],
-                "AND",
-                ["modified", "onorafter", lastModified]
-            ];
+            filters.push("AND", ["modified", "onorafter", lastModified]);
+        }
+
+        if (filtersBody.internalid) {
+            filters.push("AND", ["internalid", "anyof", filtersBody.internalid]);
+        }
+        if (filtersBody.itemid) {
+            filters.push("AND", ["itemid", "is", filtersBody.itemid]);
+        }
+        if (filtersBody.displayname) {
+            filters.push("AND", ["displayname", "contains", filtersBody.displayname]);
+        }
+
+        let columns = [
+            "itemid",
+            "displayname",
+            "modified"
+        ].map(col => col === sortBy ? search.createColumn({ name: col, sort: sortOrder }) : col);
+
+        if (!["itemid", "displayname", "modified"].includes(sortBy)) {
+             columns.push(search.createColumn({ name: sortBy, sort: sortOrder }));
         }
 
         const itemSearch = search.create({
             type: search.Type.ITEM,
             filters: filters,
-            columns: [
-                "itemid",
-                "displayname",
-                search.createColumn({
-                    name: 'modified',
-                    sort: search.Sort.DESC
-                })
-            ]
+            columns: columns
         });
 
         const pagedData = itemSearch.runPaged({ pageSize });
 
-        if (pageIndex >= pagedData.pageRanges.length) {
+        if (pagedData.count === 0 || page > pagedData.pageRanges.length) {
             return {
-                success: false,
-                message: "Invalid pageIndex",
+                success: true,
+                page: page,
+                pageSize: pageSize,
                 totalRows: pagedData.count,
-                totalPages: pagedData.pageRanges.length
+                totalPages: pagedData.pageRanges.length,
+                data: []
             };
         }
 
-        const page = pagedData.fetch({ index: pageIndex });
+        const searchPage = pagedData.fetch({ index: page - 1 });
         const data = [];
 
-        page.data.forEach(item => {
+        searchPage.data.forEach(item => {
 
             const itemId = item.id;
             const rawDate = item.getValue("modified");
@@ -161,7 +199,7 @@ define(['N/search'], (search) => {
 
         return {
             success: true,
-            pageIndex: pageIndex,
+            page: page,
             pageSize: pageSize,
             totalRows: pagedData.count,
             totalPages: pagedData.pageRanges.length,
