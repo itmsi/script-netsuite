@@ -360,8 +360,8 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                          if (!filesByPo[poId]) filesByPo[poId] = [];
                          filesByPo[poId].push({
                              id:             res.id,
-                             name:           res.getValue('name'),
-                             url:            res.getValue('custrecord_msi_web_url'),
+                             fileName:       res.getValue('name'),
+                             fileUrl:        res.getValue('custrecord_msi_web_url'),
                              created_by_api: res.getValue('custrecord_msi_createdby_api_file')
                          });
                          return true;
