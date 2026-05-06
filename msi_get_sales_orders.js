@@ -189,12 +189,22 @@ define(['N/search'], (search) => {
 
             const pageResult = pagedData.fetch({ index: pageIndex });
 
+            const reverseStatusMap = {
+                pendingApproval            : 'A',
+                pendingFulfillment         : 'B',
+                cancelled                  : 'C',
+                partiallyFulfilled         : 'D',
+                pendingBillingPartFulfilled : 'E',
+                pendingBilling             : 'F',
+                fullyBilled                : 'G',
+                closed                     : 'H'
+            };
             // ── Build header data ─────────────────────────────────────────────
             const headers = pageResult.data.map(r => ({
                 id            : String(r.id),
                 tranid        : r.getValue('tranid'),
                 tran_date     : formatToISO(r.getValue('trandate')),
-                status_code   : r.getValue('status'),
+                status_code   : reverseStatusMap[r.getValue('status')],
                 status_name   : r.getText('status'),
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
                 customer_name : r.getText('entity'),
