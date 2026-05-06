@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  */
-define(['N/search', 'N/query'], (search, query) => {
+define(['N/search'], (search) => {
 
     // Konversi tanggal NetSuite ("2/1/2029" atau "10/2/2026 2:22 PM") ke ISO 8601
     const formatToISO = (dateStr) => {
@@ -142,7 +142,14 @@ define(['N/search', 'N/query'], (search, query) => {
             // ── Build columns (attach sort to the right column) ───────────────
             const columnDefs = [
                 'tranid', 'entity', 'status', 'trandate',
-                'memo', 'lastmodifieddate', 'datecreated'
+                'memo', 'lastmodifieddate', 'datecreated',
+                'otherrefnum', 'department', 'class', 'location', 
+                'subsidiarynohierarchy', 'currency',
+                'custbody_msi_quotation_no_iec', 
+                'custbody_msi_bank_payment_so', 
+                'custbody_cseg_cn_cfi',
+                'intercotransaction',
+                'intercostatus'
             ];
 
             const columns = columnDefs.map(name => {
@@ -182,99 +189,120 @@ define(['N/search', 'N/query'], (search, query) => {
 
             const pageResult = pagedData.fetch({ index: pageIndex });
 
-            // reverse map: camelCase dari N/search getValue → huruf status code
-            const reverseStatusMap = {
-                pendingApproval            : 'A',
-                pendingFulfillment         : 'B',
-                cancelled                  : 'C',
-                partiallyFulfilled         : 'D',
-                pendingBillingPartFulfilled : 'E',
-                pendingBilling             : 'F',
-                fullyBilled                : 'G',
-                closed                     : 'H'
-            };
-
             // ── Build header data ─────────────────────────────────────────────
             const headers = pageResult.data.map(r => ({
                 id            : String(r.id),
                 tranid        : r.getValue('tranid')                       || null,
                 tran_date     : formatToISO(r.getValue('trandate'))        || null,
-                status_code   : reverseStatusMap[r.getValue('status')] || r.getValue('status') || null,
+                status_code   : r.getValue('status')                       || null,
                 status_name   : r.getText('status')                        || null,
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
                 customer_name : r.getText('entity')                        || null,
                 memo          : r.getValue('memo')                         || null,
+                otherrefnum   : r.getValue('otherrefnum')                  || null,
+                department    : r.getValue('department')                   || null,
+                department_name: r.getText('department')                   || null,
+                class_id      : r.getValue('class')                        || null, // using class_id to avoid js reserved word issues in some contexts
+                class_name    : r.getText('class')                         || null,
+                location      : r.getValue('location')                     || null,
+                location_name : r.getText('location')                      || null,
+                subsidiary    : r.getValue('subsidiarynohierarchy')                   || null,
+                subsidiary_name: r.getText('subsidiarynohierarchy')                   || null,
+                currency      : r.getValue('currency')                     || null,
+                currency_name : r.getText('currency')                      || null,
+                custbody_msi_quotation_no_iec: r.getValue('custbody_msi_quotation_no_iec') || null,
+                custbody_msi_bank_payment_so : r.getValue('custbody_msi_bank_payment_so') || null,
+                custbody_cseg_cn_cfi         : r.getValue('custbody_cseg_cn_cfi') || null,
+                intercotransaction           : r.getValue('intercotransaction') || null,
+                intercotransaction_name      : r.getText('intercotransaction') || null,
+                intercostatus                : r.getValue('intercostatus') || null,
+                intercostatus_name           : r.getText('intercostatus') || null,
                 last_modified : formatToISO(r.getValue('lastmodifieddate')) || null,
                 datecreated   : formatToISO(r.getValue('datecreated'))      || null
             }));
 
-            // ── Fetch line items via SuiteQL (tl.description tersedia di SuiteQL) ──
-            const soIds        = headers.map(h => h.id);
-            const placeholders = soIds.map(() => '?').join(', ');
-
-            const lineSql = `
-                SELECT
-                    tl.transaction                      AS so_id,
-                    tl.linesequencenumber               AS line_number,
-                    tl.item                             AS item_id,
-                    BUILTIN.DF(tl.item)                 AS item_name,
-                    tl.memo                             AS description,
-                    ABS(tl.quantity)                    AS quantity,
-
-                    NVL((
-                        SELECT SUM(qty_per_fulfillment)
-                        FROM (
-                            SELECT 
-                                it2.id,
-                                MAX(ABS(itl2.quantity)) AS qty_per_fulfillment
-                            FROM NextTransactionLineLink ntl2
-                            JOIN transaction it2 
-                                ON it2.id = ntl2.nextdoc
-                                AND it2.type = 'ItemShip'
-                            JOIN transactionline itl2
-                                ON itl2.transaction = it2.id
-                                AND itl2.mainline = 'F'
-                                AND itl2.item = tl.item
-                            WHERE ntl2.previousdoc = tl.transaction
-                            AND ntl2.previousline = tl.id
-                            GROUP BY it2.id
-                        )
-                    ), 0) AS shipped,
-
-                    tl.rate                             AS rate,
-                    ABS(tl.netamount)                   AS amount,
-                    tl.location                         AS location_id,
-                    BUILTIN.DF(tl.location)             AS location_name
-
-                FROM transactionline tl
-
-                WHERE tl.transaction IN (${placeholders})
-                AND tl.mainline    = 'F'
-                AND tl.taxline     = 'F'
-                AND tl.itemtype   IS NOT NULL
-
-                ORDER BY tl.transaction, tl.linesequencenumber
-            `;
-
-            const lineResults = query.runSuiteQL({ query: lineSql, params: soIds.map(Number) }).asMappedResults();
-
+            // ── Fetch line items via N/search ─────────────────────────────────
+            const soIds = headers.map(h => h.id);
             const linesByOrder = {};
-            lineResults.forEach(line => {
-                const soId = String(line.so_id);
-                if (!linesByOrder[soId]) linesByOrder[soId] = [];
-                linesByOrder[soId].push({
-                    line_number   : line.line_number   != null ? Number(line.line_number) : null,
-                    item_id       : line.item_id       != null ? String(line.item_id)     : null,
-                    item_name     : line.item_name                                        || null,
-                    description   : line.description                                      || null,
-                    quantity      : line.quantity      != null ? Number(line.quantity)     : null,
-                    shipped       : line.shipped       != null ? Number(line.shipped)      : 0,
-                    rate          : line.rate          != null ? Number(line.rate)         : null,
-                    amount        : line.amount        != null ? Number(line.amount)       : null,
-                    location_id   : line.location_id   != null ? String(line.location_id) : null,
-                    location_name : line.location_name                                    || null
+
+            if (soIds.length > 0) {
+                const lineSearchFilters = [
+                    ['internalid', 'anyof', soIds],
+                    'AND',
+                    ['mainline', 'is', 'F'],
+                    'AND',
+                    ['taxline', 'is', 'F'],
+                    'AND',
+                    ['shipping', 'is', 'F'],
+                    'AND',
+                    ['cogs', 'is', 'F']
+                ];
+
+                const lineSearchCols = [
+                    search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
+                    search.createColumn({ name: 'linesequencenumber', sort: search.Sort.ASC }),
+                    'item',
+                    'memo',
+                    'quantity',
+                    'quantityshiprecv',
+                    'rate',
+                    'amount',
+                    'location',
+                    'department',
+                    'class',
+                    'taxcode'
+                ];
+
+                const lineSearch = search.create({
+                    type    : search.Type.SALES_ORDER,
+                    filters : lineSearchFilters,
+                    columns : lineSearchCols
                 });
-            });
+
+                const pagedLines = lineSearch.runPaged({ pageSize: 1000 });
+                pagedLines.pageRanges.forEach(function(pageRange) {
+                    const page = pagedLines.fetch({ index: pageRange.index });
+                    page.data.forEach(function(result) {
+                        const soId = String(result.getValue('internalid'));
+                        if (!linesByOrder[soId]) linesByOrder[soId] = [];
+                        
+                        const itemId = result.getValue('item');
+                        if (!itemId) return; // Skip empty lines if any
+
+                        const rawQty = result.getValue('quantity');
+                        const quantity = rawQty !== '' && rawQty !== null ? Math.abs(Number(rawQty)) : 0;
+                        
+                        const rawAmount = result.getValue('amount');
+                        const amount = rawAmount !== '' && rawAmount !== null ? Math.abs(Number(rawAmount)) : 0;
+                        
+                        const rawShipped = result.getValue('quantityshiprecv');
+                        const shipped = rawShipped !== '' && rawShipped !== null ? Number(rawShipped) : 0;
+
+                        const rawRate = result.getValue('rate');
+                        const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
+
+                        linesByOrder[soId].push({
+                            line_number   : result.getValue('linesequencenumber') ? Number(result.getValue('linesequencenumber')) : null,
+                            item_id       : String(itemId),
+                            item_name     : result.getText('item') || null,
+                            description   : result.getValue('memo') || null,
+                            quantity      : quantity,
+                            shipped       : shipped,
+                            rate          : rate,
+                            amount        : amount,
+                            location      : result.getValue('location') || null,
+                            location_id   : result.getValue('location') ? String(result.getValue('location')) : null,
+                            location_name : result.getText('location') || null,
+                            department    : result.getValue('department') || null,
+                            department_name: result.getText('department') || null,
+                            class         : result.getValue('class') || null, // property name 'class' is valid here
+                            class_name    : result.getText('class') || null,
+                            taxcode       : result.getValue('taxcode') || null,
+                            taxcode_name  : result.getText('taxcode') || null
+                        });
+                    });
+                });
+            }
 
             // ── Merge header + lines ──────────────────────────────────────────
             const data = headers.map(h => ({
