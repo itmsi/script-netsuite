@@ -192,33 +192,33 @@ define(['N/search'], (search) => {
             // ── Build header data ─────────────────────────────────────────────
             const headers = pageResult.data.map(r => ({
                 id            : String(r.id),
-                tranid        : r.getValue('tranid')                       || null,
-                tran_date     : formatToISO(r.getValue('trandate'))        || null,
-                status_code   : r.getValue('status')                       || null,
-                status_name   : r.getText('status')                        || null,
+                tranid        : r.getValue('tranid'),
+                tran_date     : formatToISO(r.getValue('trandate')),
+                status_code   : r.getValue('status'),
+                status_name   : r.getText('status'),
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
-                customer_name : r.getText('entity')                        || null,
-                memo          : r.getValue('memo')                         || null,
-                otherrefnum   : r.getValue('otherrefnum')                  || null,
-                department    : r.getValue('department')                   || null,
-                department_name: r.getText('department')                   || null,
-                class_id      : r.getValue('class')                        || null, // using class_id to avoid js reserved word issues in some contexts
-                class_name    : r.getText('class')                         || null,
-                location      : r.getValue('location')                     || null,
-                location_name : r.getText('location')                      || null,
-                subsidiary    : r.getValue('subsidiarynohierarchy')                   || null,
-                subsidiary_name: r.getText('subsidiarynohierarchy')                   || null,
-                currency      : r.getValue('currency')                     || null,
-                currency_name : r.getText('currency')                      || null,
-                custbody_msi_quotation_no_iec: r.getValue('custbody_msi_quotation_no_iec') || null,
-                custbody_msi_bank_payment_so : r.getValue('custbody_msi_bank_payment_so') || null,
-                custbody_cseg_cn_cfi         : r.getValue('custbody_cseg_cn_cfi') || null,
-                intercotransaction           : r.getValue('intercotransaction') || null,
-                intercotransaction_name      : r.getText('intercotransaction') || null,
-                intercostatus                : r.getValue('intercostatus') || null,
-                intercostatus_name           : r.getText('intercostatus') || null,
-                last_modified : formatToISO(r.getValue('lastmodifieddate')) || null,
-                datecreated   : formatToISO(r.getValue('datecreated'))      || null
+                customer_name : r.getText('entity'),
+                memo          : r.getValue('memo'),
+                otherrefnum   : r.getValue('otherrefnum'),
+                department    : r.getValue('department'),
+                department_name: r.getText('department'),
+                class_id      : r.getValue('class'), // using class_id to avoid js reserved word issues in some contexts
+                class_name    : r.getText('class'),
+                location      : r.getValue('location'),
+                location_name : r.getText('location'),
+                subsidiary    : r.getValue('subsidiarynohierarchy'),
+                subsidiary_name: r.getText('subsidiarynohierarchy'),
+                currency      : r.getValue('currency'),
+                currency_name : r.getText('currency'),
+                custbody_msi_quotation_no_iec: r.getValue('custbody_msi_quotation_no_iec'),
+                custbody_msi_bank_payment_so : r.getValue('custbody_msi_bank_payment_so'),
+                custbody_cseg_cn_cfi         : r.getValue('custbody_cseg_cn_cfi'),
+                intercotransaction           : r.getValue('intercotransaction'),
+                intercotransaction_name      : r.getText('intercotransaction'),
+                intercostatus                : r.getValue('intercostatus'),
+                intercostatus_name           : r.getText('intercostatus'),
+                last_modified : formatToISO(r.getValue('lastmodifieddate')),
+                datecreated   : formatToISO(r.getValue('datecreated'))      
             }));
 
             // ── Fetch line items via N/search ─────────────────────────────────
@@ -284,21 +284,21 @@ define(['N/search'], (search) => {
                         linesByOrder[soId].push({
                             line_number   : result.getValue('linesequencenumber') ? Number(result.getValue('linesequencenumber')) : null,
                             item_id       : String(itemId),
-                            item_name     : result.getText('item') || null,
-                            description   : result.getValue('memo') || null,
+                            item_name     : result.getText('item'),
+                            description   : result.getValue('memo'),
                             quantity      : quantity,
                             shipped       : shipped,
                             rate          : rate,
                             amount        : amount,
-                            location      : result.getValue('location') || null,
+                            location      : result.getValue('location'),
                             location_id   : result.getValue('location') ? String(result.getValue('location')) : null,
-                            location_name : result.getText('location') || null,
-                            department    : result.getValue('department') || null,
-                            department_name: result.getText('department') || null,
-                            class         : result.getValue('class') || null, // property name 'class' is valid here
-                            class_name    : result.getText('class') || null,
-                            taxcode       : result.getValue('taxcode') || null,
-                            taxcode_name  : result.getText('taxcode') || null
+                            location_name : result.getText('location'),
+                            department    : result.getValue('department'),
+                            department_name: result.getText('department'),
+                            class         : result.getValue('class'), // property name 'class' is valid here
+                            class_name    : result.getText('class'),
+                            taxcode       : result.getValue('taxcode'),
+                            taxcode_name  : result.getText('taxcode')
                         });
                     });
                 });
