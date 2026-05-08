@@ -16,7 +16,8 @@
      "entityid": "CUST-001",      // Filter by Entity ID (opsional)
      "companyname": "John Doe",   // Filter by Company Name (opsional, support contains)
      "email": "[EMAIL_ADDRESS]", // Filter by Email (opsional)
-     "phone": "08123456789"       // Filter by Phone (opsional)
+     "phone": "08123456789",      // Filter by Phone (opsional)
+     "subsidiary": [1, 2]         // Filter by Subsidiary ID (opsional, bisa array)
    }
  }
  */
@@ -113,6 +114,9 @@ define(['N/search'], (search) => {
         if (filtersBody.phone) {
             filters.push("AND", ["phone", "is", filtersBody.phone]);
         }
+        if (filtersBody.subsidiary) {
+            filters.push("AND", ["representingsubsidiary", "anyof", filtersBody.subsidiary]);
+        }
 
         let columns = [
             "internalid",
@@ -120,10 +124,12 @@ define(['N/search'], (search) => {
             "companyname",
             "email",
             "phone",
+            "representingsubsidiary",
+            "subsidiarynohierarchy",
             "lastmodifieddate"
         ].map(col => col === sortBy ? search.createColumn({ name: col, sort: sortOrder }) : col);
 
-        if (!["internalid", "entityid", "companyname", "email", "phone", "lastmodifieddate"].includes(sortBy)) {
+        if (!["internalid", "entityid", "companyname", "email", "phone", "representingsubsidiary", "subsidiarynohierarchy", "lastmodifieddate"].includes(sortBy)) {
              columns.push(search.createColumn({ name: sortBy, sort: sortOrder }));
         }
 
@@ -150,14 +156,20 @@ define(['N/search'], (search) => {
 
         const searchPage = pagedData.fetch({ index: page - 1 });
 
-        const data = searchPage.data.map(result => ({
-            internalId: result.getValue("internalid"),
-            entityId: result.getValue("entityid"),
-            companyName: result.getValue("companyname"),
-            email: result.getValue("email"),
-            phone: result.getValue("phone"),
-            lastModifiedDate: formatToISO(result.getValue("lastmodifieddate"))
-        }));
+        const data = searchPage.data.map(result => {
+            return {
+                internalId: result.getValue("internalid"),
+                entityId: result.getValue("entityid"),
+                companyName: result.getValue("companyname"),
+                email: result.getValue("email"),
+                phone: result.getValue("phone"),
+                representingSubsidiary: result.getValue("representingsubsidiary"),
+                representingSubsidiaryName: result.getText("representingsubsidiary"),
+                primarySubsidiary: result.getValue("subsidiarynohierarchy"),
+                primarySubsidiaryName: result.getText("subsidiarynohierarchy"),
+                lastModifiedDate: formatToISO(result.getValue("lastmodifieddate"))
+            };
+        });
 
         return {
             success: true,

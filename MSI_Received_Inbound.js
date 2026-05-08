@@ -238,27 +238,6 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
         }).asMappedResults()
         var shipmentStatus = shipmentInfo.length > 0 ? shipmentInfo[0].shipmentstatus : null
 
-        // isCheck = 0               → save
-        // isCheck = 1               → tidak save, hanya cek status:
-        //   status belum received   → isProcess = 'process'  (bisa diproses)
-        //   status sudah received   → isProcess = 'success'  (sudah selesai)
-
-        if (isCheck === 0) {
-            if (shipmentStatus === 'received') {
-                isProcess = 'success'
-            } else if (itemChecked > 0) {
-                try {
-                    savedId = loadRec.save()
-                    isProcess = 'process'
-                } catch (saveError) {
-                    throw saveError
-                }
-            } else {
-                isProcess = 'process'
-            }
-        }
-
-
         // Ambil po_id dan item hanya dari payload yang dikirim (unique values)
         var payloadPoIds = [];
         var payloadItemIds = [];
@@ -324,9 +303,24 @@ define(['N/record', 'N/query', 'N/search'], function (record, query, search) {
                 log.error('error search GR via SuiteQL', e.message);
             }
         }
-
-        if (isCheck === 1 && grList.length > 0) {
-            isProcess = shipmentStatus !== 'received' ? 'process' : 'success'
+        
+        if (isCheck === 0) {
+            if (itemChecked > 0) {
+                try {
+                    savedId = loadRec.save()
+                    isProcess = 'process'
+                } catch (saveError) {
+                    throw saveError
+                }
+            } else if (shipmentStatus === 'received') {
+                isProcess = 'success'
+            }
+        } else if (isCheck === 1) {
+            if (grList.length > 0) {
+                isProcess = 'success'
+            } else {
+                isProcess = 'process'
+            }
         }
 
         return {
