@@ -15,6 +15,7 @@
      "internalid": [1, 2],        // Filter by internal ID (opsional, bisa array)
      "itemid": "ITEM-001",        // Filter by Item ID (opsional)
      "displayname": "Laptop",     // Filter by Display Name (opsional, support contains)
+     "type": ["InvtPart"]         // Filter by Item Type (opsional, array)
    }
  }
  */
@@ -111,14 +112,18 @@ define(['N/search'], (search) => {
         if (filtersBody.displayname) {
             filters.push("AND", ["displayname", "contains", filtersBody.displayname]);
         }
+        if (filtersBody.type) {
+            filters.push("AND", ["type", "anyof", filtersBody.type]);
+        }
 
         let columns = [
             "itemid",
             "displayname",
+            "type",
             "modified"
         ].map(col => col === sortBy ? search.createColumn({ name: col, sort: sortOrder }) : col);
 
-        if (!["itemid", "displayname", "modified"].includes(sortBy)) {
+        if (!["itemid", "displayname", "type", "modified"].includes(sortBy)) {
              columns.push(search.createColumn({ name: sortBy, sort: sortOrder }));
         }
 
@@ -153,6 +158,7 @@ define(['N/search'], (search) => {
                 internalId: itemId,
                 itemId: item.getValue("itemid"),
                 displayName: item.getValue("displayname"),
+                type: item.getText("type"),
                 lastModifiedDate: formatToISO(rawDate),
                 locations: []
             };
