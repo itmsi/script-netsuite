@@ -13,15 +13,7 @@
   "filters": {
     "po_ids":    [5157, 5158],   // Filter by ID (opsional)
     "po_number": "PO-2026-001",  // Filter by nomor PO (opsional)
-    "status":"PurchOrd:F",       // Filter status PO (opsional) — gunakan kode huruf:
-                                 //   PurchOrd:A = Pending Supervisor Approval
-                                 //   PurchOrd:B = Pending Receipt
-                                 //   PurchOrd:C = Partially Received
-                                 //   PurchOrd:D = Pending Billing/Partially Received
-                                 //   PurchOrd:E = Pending Bill (partial)
-                                 //   PurchOrd:F = Pending Bill
-                                 //   PurchOrd:G = Fully Billed
-                                 //   PurchOrd:H = Closed
+    "status":"F",     
     "lastmodified": "2026-03-31T23:59:00+07:00", // Filter tanggal diubah (opsional)
     "vendor_id": 10              // Filter by vendor ID (opsional)
   }
@@ -136,6 +128,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 columns: [
                     search.createColumn({ name: 'internalid', sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
                     'tranid', 'trandate', 'status', 'memo', 'entity', 'currency',
+                    // 'subtotal', 'taxtotal', 'total',
                     'amount', 'fxamount', 'lastmodifieddate', 'approvalstatus',
                     'location', 'subsidiary', 'custbody_me_wf_created_by',
                     'custbody_me_wf_in_delegation', 'custbody_me_delegate_approver',
@@ -181,6 +174,9 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     vendor_name:                       res.getText('entity'),
                     currency_id:                       res.getValue('currency'),
                     currency_symbol:                   res.getText('currency'),
+                    // subtotal:                          res.getValue('subtotal'),
+                    // taxtotal:                          res.getValue('taxtotal'),
+                    // total:                             res.getValue('total'),
                     foreigntotal:                      res.getValue('fxamount'),
                     total:                             res.getValue('amount'),
                     last_modified:                     formatToISO(res.getValue('lastmodifieddate')),
