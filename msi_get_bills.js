@@ -272,57 +272,47 @@ define(['N/search'], (search) => {
                 });
             }
 
-            // Search Workflow History
-            // Note: 'workflowactioninstance' tidak tersedia di semua environment NetSuite (mis. sandbox)
+            // Search Workflow History (Menggunakan System Notes)
             let workflowByBill = {};
             if (foundBillIds.length > 0) {
                 try {
-                    let wfSearch = search.create({
-                        type: 'workflowactioninstance',
+                    let sysNoteSearch = search.create({
+                        type: search.Type.TRANSACTION,
                         filters: [
-                            ['recordid', 'anyof', foundBillIds],
+                            ['internalid', 'anyof', foundBillIds],
                             'AND',
-                            ['recordtype', 'is', 'vendorbill']
+                            ['mainline', 'is', 'T'],
+                            'AND',
+                            ['systemnotes.date', 'isnotempty', '']
                         ],
                         columns: [
-                            search.createColumn({ name: 'date', sort: search.Sort.ASC }),
-                            'recordid',
-                            'workflowid',
-                            'operator',
-                            'date',
-                            'actionid',
-                            'substitutefrom',
-                            'substituteto',
-                            'delegateto',
-                            'comment'
+                            'internalid',
+                            search.createColumn({ name: 'date', join: 'systemnotes', sort: search.Sort.ASC }),
+                            search.createColumn({ name: 'name', join: 'systemnotes' }),
+                            search.createColumn({ name: 'field', join: 'systemnotes' }),
+                            search.createColumn({ name: 'oldvalue', join: 'systemnotes' }),
+                            search.createColumn({ name: 'newvalue', join: 'systemnotes' })
                         ]
                     });
 
-                    wfSearch.run().each(res => {
-                        let billId = res.getValue('recordid');
+                    sysNoteSearch.run().each(res => {
+                        let billId = res.getValue('internalid');
                         if (!workflowByBill[billId]) workflowByBill[billId] = [];
 
                         workflowByBill[billId].push({
-                            approval_record:         res.getValue('workflowid'),
-                            approval_record_display: res.getText('workflowid'),
-                            user_changed:            res.getValue('operator'),
-                            user_changed_display:    res.getText('operator'),
-                            date_created:            formatToISO(res.getValue('date')),
-                            action:                  res.getValue('actionid'),
-                            action_display:          res.getText('actionid'),
-                            substitute_from:         res.getValue('substitutefrom'),
-                            substitute_from_display: res.getText('substitutefrom'),
-                            substitute_to:           res.getValue('substituteto'),
-                            substitute_to_display:   res.getText('substituteto'),
-                            delegate_to:             res.getValue('delegateto'),
-                            delegate_to_display:     res.getText('delegateto'),
-                            notes_message:           res.getValue('comment')
+                            date_created:  formatToISO(res.getValue({ name: 'date', join: 'systemnotes' })),
+                            user_changed:  res.getValue({ name: 'name', join: 'systemnotes' }),
+                            user_display:  res.getText({ name: 'name', join: 'systemnotes' }) || res.getValue({ name: 'name', join: 'systemnotes' }),
+                            field:         res.getValue({ name: 'field', join: 'systemnotes' }),
+                            field_display: res.getText({ name: 'field', join: 'systemnotes' }) || res.getValue({ name: 'field', join: 'systemnotes' }),
+                            old_value:     res.getValue({ name: 'oldvalue', join: 'systemnotes' }),
+                            new_value:     res.getValue({ name: 'newvalue', join: 'systemnotes' })
                         });
 
                         return true;
                     });
                 } catch (wfErr) {
-                    // workflowactioninstance tidak support di environment ini, workflow_history akan kosong
+                    // Abaikan jika error
                 }
             }
 
