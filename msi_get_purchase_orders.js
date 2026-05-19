@@ -75,19 +75,10 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
 
             let page      = body.page      || 1;
             let pageSize  = body.page_size || 20;
-            let sortBy    = body.sort_by    || 'internalid';
+            let sortBy    = body.sort_by    || 'lastmodifieddate';
             let sortOrder = (body.sort_order || 'DESC').toUpperCase() === 'ASC' ? false : true; // DESC is default (true)
 
-            // Mapping sort_by suiteql to search column
-            const sortMap = {
-                't.id': 'internalid',
-                'po_id': 'internalid',
-                't.tranid': 'tranid',
-                'po_number': 'tranid',
-                't.trandate': 'trandate',
-                'po_date': 'trandate',
-                'lastmodified': 'lastmodifieddate'
-            };
+
 
             let filtersBody = body.filters || {};
 
@@ -121,30 +112,70 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 searchFilters.push('AND', ['vendor.internalid', 'anyof', filtersBody.vendor_id]);
             }
 
+            let sortColumn = sortBy;
+            let searchColumns = [
+                'tranid', 'trandate', 'status', 'memo', 'entity', 'currency',
+                // 'subtotal', 'taxtotal', 'total',
+                'amount', 'fxamount', 'lastmodifieddate', 'approvalstatus',
+                'location', 'subsidiary', 'custbody_me_wf_created_by',
+                'custbody_me_wf_in_delegation', 'custbody_me_delegate_approver',
+                'custbody_msi_createdby_api', 'custbody_me_pr_date',
+                'custbody_me_project_location', 'custbody_me_pr_type',
+                'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
+                'duedate', 'otherrefnum', 'customform', 'class', 
+                search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
+                'subsidiarynohierarchy', 'custbody_me_validity_date', 'department', 'datecreated'
+            ];
+
+            if (sortColumn === 'lastmodifieddate') {
+                searchColumns.unshift(search.createColumn({ name: 'lastmodifieddate', sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }));
+            } else {
+                searchColumns.unshift('lastmodifieddate');
+                let foundIndex = -1;
+                for (let i = 0; i < searchColumns.length; i++) {
+                    if (typeof searchColumns[i] === 'string' && searchColumns[i] === sortColumn) {
+                        foundIndex = i;
+                        break;
+                    }
+                }
+                if (foundIndex > -1) {
+                    searchColumns[foundIndex] = search.createColumn({ name: sortColumn, sort: sortOrder ? search.Sort.DESC : search.Sort.ASC });
+                } else {
+                    searchColumns.push(search.createColumn({ name: sortColumn, sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }));
+                }
+            }
+
             // ── Buat Search Header ─────────────────────────────────────────────
             let headerSearch = search.create({
                 type: search.Type.PURCHASE_ORDER,
                 filters: searchFilters,
-                columns: [
-                    search.createColumn({ name: 'internalid', sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
-                    'tranid', 'trandate', 'status', 'memo', 'entity', 'currency',
-                    // 'subtotal', 'taxtotal', 'total',
-                    'amount', 'fxamount', 'lastmodifieddate', 'approvalstatus',
-                    'location', 'subsidiary', 'custbody_me_wf_created_by',
-                    'custbody_me_wf_in_delegation', 'custbody_me_delegate_approver',
-                    'custbody_msi_createdby_api', 'custbody_me_pr_date',
-                    'custbody_me_project_location', 'custbody_me_pr_type',
-                    'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
-                    'duedate', 'otherrefnum', 'customform', 'class', 
-                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
-                    'subsidiarynohierarchy', 'custbody_me_validity_date', 'department', 'datecreated'
-                ]
+                columns: searchColumns
             });
 
-            // ── Eksekusi Search Berhalaman ────────────────────────────────────
-            let pagedData = headerSearch.runPaged({ pageSize: pageSize });
-            let totalRecords = pagedData.count;
-            let totalPages   = pagedData.pageRanges.length;
+            // ── Eksekusi Search Berhalaman (Bypass Limit Minimal Page Size NetSuite < 5) ──
+            let totalRecords = 0;
+            let totalPages = 0;
+            let searchResults = [];
+
+            if (pageSize >= 5) {
+                let pagedData = headerSearch.runPaged({ pageSize: pageSize });
+                totalRecords = pagedData.count;
+                totalPages   = pagedData.pageRanges.length;
+
+                if (totalRecords > 0 && page <= totalPages) {
+                    let searchPage = pagedData.fetch({ index: page - 1 });
+                    searchResults = searchPage.data;
+                }
+            } else {
+                totalRecords = headerSearch.runPaged().count;
+                totalPages   = Math.ceil(totalRecords / pageSize);
+
+                if (totalRecords > 0 && page <= totalPages) {
+                    let startIndex = (page - 1) * pageSize;
+                    let endIndex = startIndex + pageSize;
+                    searchResults = headerSearch.run().getRange({ start: startIndex, end: endIndex }) || [];
+                }
+            }
 
             if (totalRecords === 0 || page > totalPages) {
                 return {
@@ -157,11 +188,10 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 };
             }
 
-            let searchPage = pagedData.fetch({ index: page - 1 });
             let pagedHeaders = [];
             let foundPoIds   = [];
 
-            searchPage.data.forEach(res => {
+            searchResults.forEach(res => {
                 foundPoIds.push(res.id);
                 pagedHeaders.push({
                     po_id:                             res.id,
@@ -212,6 +242,24 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 });
             });
 
+            //  fungsi helper offset fetch next (bypass 4000 limit)
+            const fetchSearchResults = (searchObj, callback) => {
+                let start = 0;
+                let pageSize = 1000;
+                let resultSet = searchObj.run();
+                while (true) {
+                    let results = resultSet.getRange({ start: start, end: start + pageSize });
+                    if (!results || results.length === 0) break;
+                    
+                    for (let i = 0; i < results.length; i++) {
+                        callback(results[i]);
+                    }
+                    
+                    if (results.length < pageSize) break;
+                    start += pageSize;
+                }
+            };
+
             // ── Search Line Items ─────────────────────────────────────────────
             let linesByPo = {};
             if (foundPoIds.length > 0) {
@@ -234,7 +282,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     ]
                 });
 
-                lineSearch.run().each(res => {
+                fetchSearchResults(lineSearch, res => {
                     let poId = res.getValue('internalid');
                     if (!linesByPo[poId]) linesByPo[poId] = [];
 
@@ -297,7 +345,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                  });
  
                  let processedNoteIds = {};
-                 noteSearch.run().each(res => {
+                 fetchSearchResults(noteSearch, res => {
                      let noteRecordId = res.id;
                      if (processedNoteIds[noteRecordId]) return true;
                      processedNoteIds[noteRecordId] = true;
@@ -346,7 +394,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                      });
 
                      let processedFileIds = {};
-                     fileSearch.run().each(res => {
+                     fetchSearchResults(fileSearch, res => {
                          let fileRecordId = res.id;
                          if (processedFileIds[fileRecordId]) return true;
                          processedFileIds[fileRecordId] = true;

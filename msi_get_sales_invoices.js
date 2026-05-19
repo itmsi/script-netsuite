@@ -200,6 +200,27 @@ function formatToISO(dateStr) {
             var invcIds = headers.map(function(h) { return h.id; });
             
             if (invcIds.length > 0) {
+                // Fungsi helper offset fetch next (bypass 4000 limit)
+                var fetchSearchResults = function(searchObj, callback) {
+                    var start = 0;
+                    var pageSize = 1000;
+                    var resultSet = searchObj.run();
+                    while (true) {
+                        var results = resultSet.getRange({ start: start, end: start + pageSize });
+                        if (!results || results.length === 0) break;
+                        
+                        var stopLoop = false;
+                        for (var i = 0; i < results.length; i++) {
+                            if (callback(results[i]) === false) {
+                                stopLoop = true;
+                                break;
+                            }
+                        }
+                        if (stopLoop || results.length < pageSize) break;
+                        start += pageSize;
+                    }
+                };
+
                 var lineSearch = search.create({
                     type: search.Type.INVOICE,
                     filters: [
@@ -236,7 +257,7 @@ function formatToISO(dateStr) {
                 // digunakan agar row duplikat akibat multiple VIN tidak menduplikasi baris
                 var lineKeyIndex = {};
 
-                lineSearch.run().each(function(r) {
+                fetchSearchResults(lineSearch, function(r) {
                     var iId     = String(r.getValue('internalid'));
                     var lineNum = r.getValue('line') ? Number(r.getValue('line')) : null;
                     var lineKey = iId + '_' + lineNum;
