@@ -114,7 +114,16 @@ define(['N/search'], function (search) {
                 search.createColumn({ name: 'entity' }),
                 search.createColumn({ name: 'memo' }),
                 search.createColumn({ name: 'lastmodifieddate' }),
-                search.createColumn({ name: 'datecreated' })
+                search.createColumn({ name: 'datecreated' }),
+                search.createColumn({ name: 'otherrefnum' }),
+                search.createColumn({ name: 'saleseffectivedate' }),
+                search.createColumn({ name: 'salesrep' }),
+                search.createColumn({ name: 'createdfrom' }),
+                search.createColumn({ name: 'subsidiary' }),
+                search.createColumn({ name: 'location' }),
+                search.createColumn({ name: 'class' }),
+                search.createColumn({ name: 'department' }),
+                search.createColumn({ name: 'custbody_cseg_cn_cfi' })
             ];
 
             // Apply sort ke kolom yang sesuai
@@ -148,20 +157,168 @@ define(['N/search'], function (search) {
 
             var pageResult = pagedData.fetch({ index: page - 1 });
 
-            // ── Map hasil ─────────────────────────────────────────────────────
-            var data = pageResult.data.map(function (r) {
-                return {
+            // ── Map hasil (Headers) ──────────────────────────────────────────
+            var pagedHeaders = [];
+            var foundIds     = [];
+
+            pageResult.data.forEach(function (r) {
+                foundIds.push(r.id);
+                pagedHeaders.push({
                     id           : String(r.id),
                     tranid       : r.getValue('tranid'),
                     customer_id  : r.getValue('entity')  || null,
                     customer_name: r.getText('entity')   || null,
-                    tran_date    : r.getValue('trandate'),
+                    tran_date    : formatToISO(r.getValue('trandate')),
                     status_code  : r.getValue('status'),
                     status_name  : r.getText('status'),
                     memo         : r.getValue('memo')    || null,
                     last_modified: formatToISO(r.getValue('lastmodifieddate')),
-                    datecreated  : formatToISO(r.getValue('datecreated'))
-                };
+                    datecreated  : formatToISO(r.getValue('datecreated')),
+
+                    otherrefnum                 : r.getValue('otherrefnum') || null,
+                    saleseffectivedate          : formatToISO(r.getValue('saleseffectivedate')),
+                    salesrep                    : r.getValue('salesrep') || null,
+                    salesrep_display            : r.getText('salesrep') || null,
+                    createdfrom                 : r.getValue('createdfrom') || null,
+                    createdfrom_display         : r.getText('createdfrom') || null,
+                    subsidiary                  : r.getValue('subsidiary') || null,
+                    subsidiary_display          : r.getText('subsidiary') || null,
+                    location                    : r.getValue('location') || null,
+                    location_display            : r.getText('location') || null,
+                    class                       : r.getValue('class') || null,
+                    class_display               : r.getText('class') || null,
+                    departement                 : r.getValue('department') || null,
+                    departement_display         : r.getText('department') || null,
+                    custbody_cseg_cn_cfi        : r.getValue('custbody_cseg_cn_cfi') || null,
+                    custbody_cseg_cn_cfi_display: r.getText('custbody_cseg_cn_cfi') || null,
+                    
+                    items        : []
+                });
+            });
+
+            // ── Search Items ──────────────────────────────────────────────────
+            var itemsByTran = {};
+            if (foundIds.length > 0) {
+                // Untuk custom columns bisa gagal kalau tidak ada di instance,
+                // tambahkan kolom dengan createColumn agar lebih aman.
+                var itemColumns = [
+                    'internalid', 'line', 'lineuniquekey', 'item', 'quantity', 'quantityshiprecv', 'quantitybilled',
+                    'unit', 'memo', 'pricelevel', 'rate', 'amount', 'taxcode',
+                    'grossamount', 'taxamount', 'options', 'department', 'class', 'location', 'closed',
+                    'custcol_me_tier_price', 'custcol_cseg_cn_cfi',
+                    search.createColumn({ name: 'inventorynumber', join: 'inventorydetail' }),
+                    search.createColumn({ name: 'quantity', join: 'inventorydetail' }),
+                    search.createColumn({ name: 'binnumber', join: 'inventorydetail' })
+                ];
+
+                try {
+                    var itemSearch = search.create({
+                        type: search.Type.RETURN_AUTHORIZATION,
+                        filters: [
+                            ['internalid', 'anyof', foundIds],
+                            'AND',
+                            ['mainline', 'is', 'F'],
+                            'AND',
+                            ['taxline', 'is', 'F'],
+                            'AND',
+                            ['shipping', 'is', 'F']
+                        ],
+                        columns: itemColumns
+                    });
+
+                    itemSearch.run().each(function (res) {
+                        var tranId = res.getValue('internalid');
+                        var lineId = res.getValue('lineuniquekey');
+
+                        if (!itemsByTran[tranId]) {
+                            itemsByTran[tranId] = { lines: [], map: {} };
+                        }
+                        
+                        var tranObj = itemsByTran[tranId];
+
+                        // Dapatkan data Inventory Detail dari join
+                        var invNum = res.getValue({ name: 'inventorynumber', join: 'inventorydetail' });
+                        var invNumDisplay = res.getText({ name: 'inventorynumber', join: 'inventorydetail' });
+                        var invQty = res.getValue({ name: 'quantity', join: 'inventorydetail' });
+                        var invBin = res.getValue({ name: 'binnumber', join: 'inventorydetail' });
+                        var invBinDisplay = res.getText({ name: 'binnumber', join: 'inventorydetail' });
+
+                        var invDetail = null;
+                        if (invNum || invQty || invBin) {
+                            invDetail = {
+                                inventory_number: invNum,
+                                inventory_number_display: invNumDisplay,
+                                quantity: invQty,
+                                bin_number: invBin,
+                                bin_number_display: invBinDisplay
+                            };
+                        }
+
+                        // Jika item baris ini belum di-push ke array (grouping by line)
+                        if (!tranObj.map[lineId]) {
+                            var newItem = {
+                                line_id         : lineId,
+                                line            : res.getValue('line'),
+                                item            : res.getValue('item'),
+                                item_display    : res.getText('item'),
+                                returned        : res.getValue('quantityshiprecv'),
+                                refunded        : res.getValue('quantitybilled'),
+                                quantity        : Math.abs(res.getValue('quantity')),
+                                units           : res.getValue('unit'),
+                                units_display   : res.getText('unit'),
+                                inventory_details: [],
+                                description     : res.getValue('memo'),
+                                tier_price      : res.getValue('custcol_me_tier_price'),
+                                price_level     : res.getValue('pricelevel'),
+                                price_level_display : res.getText('pricelevel'),
+                                unit_price      : res.getValue('rate'),
+                                amount          : Math.abs(res.getValue('amount')),
+                                tax_code        : res.getValue('taxcode'),
+                                tax_code_display: res.getText('taxcode'),
+                                gross_amt       : res.getValue('grossamount'),
+                                tax_amt         : res.getValue('taxamount'),
+                                options         : res.getValue('options'),
+                                department      : res.getValue('department'),
+                                department_display: res.getText('department'),
+                                class           : res.getValue('class'),
+                                class_display   : res.getText('class'),
+                                location        : res.getValue('location'),
+                                location_display: res.getText('location'),
+                                closed          : res.getValue('closed'),
+                                china_cash_flow_item: res.getValue('custcol_cseg_cn_cfi'),
+                                china_cash_flow_item_display: res.getText('custcol_cseg_cn_cfi')
+                            };
+
+                            if (invDetail) {
+                                newItem.inventory_details.push(invDetail);
+                            }
+
+                            tranObj.lines.push(newItem);
+                            tranObj.map[lineId] = newItem;
+                        } else {
+                            // Jika line ini sudah ada, cukup tambahkan inventory detail baru
+                            if (invDetail) {
+                                tranObj.map[lineId].inventory_details.push(invDetail);
+                            }
+                        }
+                        return true;
+                    });
+                } catch (itemErr) {
+                    // Fallback jika ada custom column yang tidak dikenali/tidak ada
+                    // Kembalikan header tanpa membatalkan script sepenuhnya, atau kembalikan error
+                    return {
+                        status: 'error',
+                        message: 'Error di mapping items (kemungkinan kolom custom tidak ditemukan): ' + (itemErr.message || JSON.stringify(itemErr))
+                    };
+                }
+            }
+
+            // Gabungkan items ke dalam pagedHeaders
+            var data = pagedHeaders.map(function(header) {
+                if (itemsByTran[header.id]) {
+                    header.items = itemsByTran[header.id].lines;
+                }
+                return header;
             });
 
             return {
