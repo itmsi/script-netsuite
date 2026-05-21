@@ -206,7 +206,6 @@ define(['N/search', 'N/record'], (search, record) => {
                     // sublist 'apply' -> Applied To (Bills)
                     try {
                         let applyCount = rec.getLineCount({ sublistId: 'apply' });
-                        header.debug_apply_count = applyCount; // see how many lines exist
                         
                         for (let i = 0; i < applyCount; i++) {
                             // Hanya ambil yang applied (amount > 0 atau apply = T)
@@ -239,7 +238,6 @@ define(['N/search', 'N/record'], (search, record) => {
                     // sublist 'credit' -> Credit Applied (Vendor Credits)
                     try {
                         let creditCount = rec.getLineCount({ sublistId: 'credit' });
-                        header.debug_credit_count = creditCount; // see how many lines exist
 
                         for (let i = 0; i < creditCount; i++) {
                             let isApplied = getVal(rec, 'credit', 'apply', i);
@@ -336,8 +334,6 @@ define(['N/search', 'N/record'], (search, record) => {
 
                     // Masukkan ke masing-masing header payment
                     pagedHeaders.forEach(h => {
-                        h.debug_paid_bill_ids = allPaidBillIds;
-                        h.debug_credit_search_count = searchCount;
                         if (h.debug_credit_count === -1 || h.credit_applied.length === 0) {
                             let creditsForThisPayment = [];
                             h.applied_to.forEach(app => {

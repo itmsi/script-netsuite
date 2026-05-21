@@ -269,48 +269,66 @@ define(['N/search'], (search) => {
                     columns : lineSearchCols
                 });
 
-                const pagedLines = lineSearch.runPaged({ pageSize: 1000 });
-                pagedLines.pageRanges.forEach(function(pageRange) {
-                    const page = pagedLines.fetch({ index: pageRange.index });
-                    page.data.forEach(function(result) {
-                        const soId = String(result.getValue('internalid'));
-                        if (!linesByOrder[soId]) linesByOrder[soId] = [];
+                // Fungsi helper offset fetch next (bypass 4000 limit)
+                const fetchSearchResults = (searchObj, callback) => {
+                    let start = 0;
+                    const pageSize = 1000;
+                    const resultSet = searchObj.run();
+                    while (true) {
+                        const results = resultSet.getRange({ start: start, end: start + pageSize });
+                        if (!results || results.length === 0) break;
                         
-                        const itemId = result.getValue('item');
-                        if (!itemId) return; // Skip empty lines if any
+                        let stopLoop = false;
+                        for (let i = 0; i < results.length; i++) {
+                            if (callback(results[i]) === false) {
+                                stopLoop = true;
+                                break;
+                            }
+                        }
+                        if (stopLoop || results.length < pageSize) break;
+                        start += pageSize;
+                    }
+                };
 
-                        const rawQty = result.getValue('quantity');
-                        const quantity = rawQty !== '' && rawQty !== null ? Math.abs(Number(rawQty)) : 0;
-                        
-                        const rawAmount = result.getValue('amount');
-                        const amount = rawAmount !== '' && rawAmount !== null ? Math.abs(Number(rawAmount)) : 0;
-                        
-                        const rawShipped = result.getValue('quantityshiprecv');
-                        const shipped = rawShipped !== '' && rawShipped !== null ? Number(rawShipped) : 0;
+                fetchSearchResults(lineSearch, (result) => {
+                    const soId = String(result.getValue('internalid'));
+                    if (!linesByOrder[soId]) linesByOrder[soId] = [];
+                    
+                    const itemId = result.getValue('item');
+                    if (!itemId) return true; // Skip empty lines if any
 
-                        const rawRate = result.getValue('rate');
-                        const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
+                    const rawQty = result.getValue('quantity');
+                    const quantity = rawQty !== '' && rawQty !== null ? Math.abs(Number(rawQty)) : 0;
+                    
+                    const rawAmount = result.getValue('amount');
+                    const amount = rawAmount !== '' && rawAmount !== null ? Math.abs(Number(rawAmount)) : 0;
+                    
+                    const rawShipped = result.getValue('quantityshiprecv');
+                    const shipped = rawShipped !== '' && rawShipped !== null ? Number(rawShipped) : 0;
 
-                        linesByOrder[soId].push({
-                            line_number   : result.getValue('linesequencenumber') ? Number(result.getValue('linesequencenumber')) : null,
-                            item_id       : String(itemId),
-                            item_name     : result.getText('item'),
-                            description   : result.getValue('memo'),
-                            quantity      : quantity,
-                            shipped       : shipped,
-                            rate          : rate,
-                            amount        : amount,
-                            location      : result.getValue('location'),
-                            location_id   : result.getValue('location') ? String(result.getValue('location')) : null,
-                            location_name : result.getText('location'),
-                            department    : result.getValue('department'),
-                            department_name: result.getText('department'),
-                            class         : result.getValue('class'), // property name 'class' is valid here
-                            class_name    : result.getText('class'),
-                            taxcode       : result.getValue('taxcode'),
-                            taxcode_name  : result.getText('taxcode')
-                        });
+                    const rawRate = result.getValue('rate');
+                    const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
+
+                    linesByOrder[soId].push({
+                        line_number   : result.getValue('linesequencenumber') ? Number(result.getValue('linesequencenumber')) : null,
+                        item_id       : String(itemId),
+                        item_name     : result.getText('item'),
+                        description   : result.getValue('memo'),
+                        quantity      : quantity,
+                        shipped       : shipped,
+                        rate          : rate,
+                        amount        : amount,
+                        location      : result.getValue('location'),
+                        location_id   : result.getValue('location') ? String(result.getValue('location')) : null,
+                        location_name : result.getText('location'),
+                        department    : result.getValue('department'),
+                        department_name: result.getText('department'),
+                        class         : result.getValue('class'), // property name 'class' is valid here
+                        class_name    : result.getText('class'),
+                        taxcode       : result.getValue('taxcode'),
+                        taxcode_name  : result.getText('taxcode')
                     });
+                    return true;
                 });
             }
 
