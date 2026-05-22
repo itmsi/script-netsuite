@@ -145,6 +145,7 @@ define(['N/search'], (search) => {
                 'memo', 'lastmodifieddate', 'datecreated',
                 'otherrefnum', 'department', 'class', 'location', 
                 'subsidiarynohierarchy', 'currency',
+                'amount',
                 'custbody_msi_quotation_no_iec', 
                 'custbody_msi_bank_payment_so', 
                 'custbody_cseg_cn_cfi',
@@ -227,6 +228,7 @@ define(['N/search'], (search) => {
                 intercotransaction_name      : r.getText('intercotransaction'),
                 intercostatus                : r.getValue('intercostatus'),
                 intercostatus_name           : r.getText('intercostatus'),
+                total_amount  : r.getValue('amount') !== '' && r.getValue('amount') !== null ? Number(r.getValue('amount')) : 0,
                 last_modified : formatToISO(r.getValue('lastmodifieddate')),
                 datecreated   : formatToISO(r.getValue('datecreated'))      
             }));
