@@ -174,6 +174,7 @@ function formatToISO(dateStr) {
                     custbody_msi_bank_payment_so       : r.getValue('custbody_msi_bank_payment_so') || null,
                     custbody_msi_bank_payment_so_display: r.getText('custbody_msi_bank_payment_so') || null,
                     approvalstatus                     : r.getValue('approvalstatus') || null,
+                    approvalstatus_display             : r.getText('approvalstatus') || null,
                     custbody_me_wf_created_by          : r.getValue('custbody_me_wf_created_by') || null,
                     custbody_me_wf_created_by_display  : r.getText('custbody_me_wf_created_by') || null,
                     custbody_me_wf_next_approver_blank : r.getValue('custbody_me_wf_next_approver_blank') || null,
