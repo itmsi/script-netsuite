@@ -228,7 +228,7 @@ define(['N/search'], (search) => {
                 intercotransaction_name      : r.getText('intercotransaction'),
                 intercostatus                : r.getValue('intercostatus'),
                 intercostatus_name           : r.getText('intercostatus'),
-                total_amount  : r.getValue('amount') !== '' && r.getValue('amount') !== null ? Number(r.getValue('amount')) : 0,
+                total_amount                 : r.getValue('amount') !== '' && r.getValue('amount') !== null ? r.getValue('amount') : 0,
                 last_modified : formatToISO(r.getValue('lastmodifieddate')),
                 datecreated   : formatToISO(r.getValue('datecreated'))      
             }));
