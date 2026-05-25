@@ -226,6 +226,8 @@ define(['N/search'], (search) => {
 
                 const lineSearchCols = [
                     search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
+                    search.createColumn({ name: 'line', sort: search.Sort.ASC }),
+                    search.createColumn({ name: 'lineuniquekey' }),
                     search.createColumn({ name: 'linesequencenumber', sort: search.Sort.ASC }),
                     search.createColumn({ name: "displayname", join: "item" }),
                     'item',
@@ -270,6 +272,8 @@ define(['N/search'], (search) => {
                     const qtId = String(result.getValue('internalid'));
                     if (!linesByOrder[qtId]) linesByOrder[qtId] = [];
                     
+                    const lineNum = result.getValue('line') ? Number(result.getValue('line')) : Number(result.getValue('linesequencenumber'));
+                    
                     const itemId = result.getValue('item');
                     if (!itemId) return true; // Skip empty lines if any
 
@@ -283,7 +287,8 @@ define(['N/search'], (search) => {
                     const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
 
                     linesByOrder[qtId].push({
-                        line_number     : result.getValue('linesequencenumber') ? Number(result.getValue('linesequencenumber')) : null,
+                        line            : lineNum,
+                        line_id         : result.getValue('lineuniquekey'),
                         item_id         : String(itemId),
                         item_name       : result.getText('item'),
                         item_displayname: result.getValue({ name: 'displayname', join: 'item' }) || null,
