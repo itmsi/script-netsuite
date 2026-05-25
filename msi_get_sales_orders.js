@@ -150,7 +150,10 @@ define(['N/search'], (search) => {
                 'custbody_msi_bank_payment_so', 
                 'custbody_cseg_cn_cfi',
                 'intercotransaction',
-                'intercostatus'
+                'intercostatus',
+                'startdate',
+                'enddate',
+                'terms'
             ];
 
             const columns = columnDefs.map(name => {
@@ -210,6 +213,9 @@ define(['N/search'], (search) => {
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
                 customer_name : r.getText('entity'),
                 memo          : r.getValue('memo'),
+                start_date    : formatToISO(r.getValue('startdate')),
+                end_date      : formatToISO(r.getValue('enddate')),
+                terms         : r.getText('terms'),
                 otherrefnum   : r.getValue('otherrefnum'),
                 department    : r.getValue('department'),
                 department_name: r.getText('department'),

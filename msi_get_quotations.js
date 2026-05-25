@@ -95,11 +95,12 @@ define(['N/search'], (search) => {
 
             // ── Sort column mapping ───────────────────────────────────────────
             const sortColMap = {
-                'trandate' : 'trandate',
-                'tranid'   : 'tranid',
-                'entity'   : 'entity',
-                'status'   : 'status',
-                'id'       : 'internalid'
+                'lastmodifieddate': 'lastmodifieddate',
+                'trandate'        : 'trandate',
+                'tranid'          : 'tranid',
+                'entity'          : 'entity',
+                'status'          : 'status',
+                'id'              : 'internalid'
             };
             const sortColName = sortColMap[sortBy.replace('qt.', '')] || 'trandate';
             const sortDir     = sortOrder === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
@@ -111,11 +112,18 @@ define(['N/search'], (search) => {
                 'otherrefnum', 'department', 'class', 'location', 
                 'subsidiarynohierarchy', 'currency',
                 'amount',
-                'custbody_msi_quotation_no_iec', 
-                'custbody_msi_bank_payment_so', 
+                'custbody_msi_bank_payment_so',
                 'custbody_cseg_cn_cfi',
-                'intercotransaction',
-                'intercostatus'
+                'custbody_me_approval_status',
+                'duedate',
+                'entitystatus',
+                'probability',
+                'expectedclosedate',
+                'custbody_me_wf_created_by',
+                'salesrep',
+                'opportunity',
+                'forecasttype',
+                'partner'
             ];
 
             const columns = columnDefs.map(name => {
@@ -160,11 +168,29 @@ define(['N/search'], (search) => {
                 id            : String(r.id),
                 tranid        : r.getValue('tranid'),
                 tran_date     : formatToISO(r.getValue('trandate')),
+                duedate                      : formatToISO(r.getValue('duedate')),
+                entitystatus                 : r.getValue('entitystatus'),
+                entitystatus_name            : r.getText('entitystatus'),
+                probability                  : r.getValue('probability') !== '' && r.getValue('probability') !== null ? Number(r.getValue('probability').toString().replace('%', '')) : null,
+                expectedclosedate            : formatToISO(r.getValue('expectedclosedate')),
+                custbody_me_approval_status  : r.getValue('custbody_me_approval_status'),
+                custbody_me_approval_status_name : r.getText('custbody_me_approval_status'),
+                custbody_me_wf_created_by    : r.getValue('custbody_me_wf_created_by'),
+                custbody_me_wf_created_by_name : r.getText('custbody_me_wf_created_by'),
+                salesrep                     : r.getValue('salesrep'),
+                salesrep_name                : r.getText('salesrep'),
+                opportunity                  : r.getValue('opportunity'),
+                opportunity_name             : r.getText('opportunity'),
+                forecasttype                 : r.getValue('forecasttype'),
+                forecasttype_name            : r.getText('forecasttype'),
+                partner                      : r.getValue('partner'),
+                partner_name                 : r.getText('partner'),
                 status_code   : r.getValue('status'),
                 status_name   : r.getText('status'),
                 customer_id   : r.getValue('entity') ? String(r.getValue('entity')) : null,
                 customer_name : r.getText('entity'),
                 memo          : r.getValue('memo'),
+                approvalstatus: r.getValue('custbody_me_approval_status'),
                 otherrefnum   : r.getValue('otherrefnum'),
                 department    : r.getValue('department'),
                 department_name: r.getText('department'),
@@ -176,16 +202,13 @@ define(['N/search'], (search) => {
                 subsidiary_name: r.getText('subsidiarynohierarchy'),
                 currency      : r.getValue('currency'),
                 currency_name : r.getText('currency'),
-                custbody_msi_quotation_no_iec: r.getValue('custbody_msi_quotation_no_iec'),
                 custbody_msi_bank_payment_so : r.getValue('custbody_msi_bank_payment_so'),
+                custbody_msi_bank_payment_so_name : r.getText('custbody_msi_bank_payment_so'),
                 custbody_cseg_cn_cfi         : r.getValue('custbody_cseg_cn_cfi'),
-                intercotransaction           : r.getValue('intercotransaction'),
-                intercotransaction_name      : r.getText('intercotransaction'),
-                intercostatus                : r.getValue('intercostatus'),
-                intercostatus_name           : r.getText('intercostatus'),
+                custbody_cseg_cn_cfi_name    : r.getText('custbody_cseg_cn_cfi'),
                 total_amount                 : r.getValue('amount') !== '' && r.getValue('amount') !== null ? r.getValue('amount') : 0,
-                last_modified : formatToISO(r.getValue('lastmodifieddate')),
-                datecreated   : formatToISO(r.getValue('datecreated'))      
+                last_modified                : formatToISO(r.getValue('lastmodifieddate')),
+                datecreated                  : formatToISO(r.getValue('datecreated'))
             }));
 
             // ── Fetch line items via N/search ─────────────────────────────────
