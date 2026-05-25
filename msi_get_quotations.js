@@ -229,16 +229,23 @@ define(['N/search'], (search) => {
                     search.createColumn({ name: 'line', sort: search.Sort.ASC }),
                     search.createColumn({ name: 'lineuniquekey' }),
                     search.createColumn({ name: 'linesequencenumber', sort: search.Sort.ASC }),
-                    search.createColumn({ name: "displayname", join: "item" }),
+                    search.createColumn({ name: 'displayname', join: 'item' }),
+                    search.createColumn({ name: 'inventorynumber', join: 'inventoryDetail' }),
                     'item',
+                    'itemtype',
+                    'pricelevel',
                     'memo',
                     'quantity',
+                    'unit',
                     'rate',
                     'amount',
+                    'custcol_4601_witaxapplies',
                     'location',
+                    'grossamount',
+                    'taxamount',
+                    'taxcode',
                     'department',
-                    'class',
-                    'taxcode'
+                    'class'
                 ];
 
                 const lineSearch = search.create({
@@ -286,28 +293,141 @@ define(['N/search'], (search) => {
                     const rawRate = result.getValue('rate');
                     const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
 
+                    const grossamt = amount + Number(result.getValue('taxamount'));
+
                     linesByOrder[qtId].push({
                         line            : lineNum,
                         line_id         : result.getValue('lineuniquekey'),
                         item_id         : String(itemId),
                         item_name       : result.getText('item'),
                         item_displayname: result.getValue({ name: 'displayname', join: 'item' }) || null,
+                        item_type       : result.getValue('itemtype'),
+                        pricelevel      : result.getValue('pricelevel') || null,
+                        pricelevel_name : result.getText('pricelevel') || null,
+                        quantityavailable : null, // will be populated by inventory lookup below
+                        quantityonhand  : null,   // will be populated by inventory lookup below
+                        unit            : result.getValue('unit') || null,
                         description     : result.getValue('memo'),
                         quantity        : quantity,
                         rate            : rate,
                         amount          : amount,
+                        grossamt_raw    : result.getValue('grossamount'),
+                        grossamt        : grossamt,
+                        taxamount       : result.getValue('taxamount'),
+                        taxcode         : result.getValue('taxcode'),
+                        taxcode_name    : result.getText('taxcode'),
+                        taxrate         : 0,
                         location        : result.getValue('location'),
-                        location_id     : result.getValue('location') ? String(result.getValue('location')) : null,
                         location_name   : result.getText('location'),
                         department      : result.getValue('department'),
                         department_name : result.getText('department'),
                         class           : result.getValue('class'), // property name 'class' is valid here
-                        class_name      : result.getText('class'),
-                        taxcode         : result.getValue('taxcode'),
-                        taxcode_name    : result.getText('taxcode')
+                        class_name      : result.getText('class')
                     });
                     return true;
                 });
+
+                // Robust tax rate lookup
+                const taxCodeIds = [];
+                Object.keys(linesByOrder).forEach((qtId) => {
+                    linesByOrder[qtId].forEach((line) => {
+                        if (line.taxcode && taxCodeIds.indexOf(line.taxcode) === -1) {
+                            taxCodeIds.push(line.taxcode);
+                        }
+                    });
+                });
+
+                const taxRateMap = {};
+                if (taxCodeIds.length > 0) {
+                    const taxSearch = search.create({
+                        type: 'salestaxitem',
+                        filters: [['internalid', 'anyof', taxCodeIds]],
+                        columns: ['rate']
+                    });
+                    taxSearch.run().each((r) => {
+                        const rateStr = r.getValue('rate') || "0%";
+                        taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
+                        return true;
+                    });
+                    
+                    // Fallback search for Tax Groups if needed
+                    const missingIds = taxCodeIds.filter(id => !taxRateMap[id]);
+                    if (missingIds.length > 0) {
+                        const groupSearch = search.create({
+                            type: 'taxgroup',
+                            filters: [['internalid', 'anyof', missingIds]],
+                            columns: ['rate']
+                        });
+                        groupSearch.run().each((r) => {
+                            const rateStr = r.getValue('rate') || "0%";
+                            taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
+                            return true;
+                        });
+                    }
+                }
+
+                // Populate tax rate back to lines
+                Object.keys(linesByOrder).forEach((qtId) => {
+                    linesByOrder[qtId].forEach((line) => {
+                        if (line.taxcode && taxRateMap[line.taxcode] !== undefined) {
+                            line.taxrate = taxRateMap[line.taxcode];
+                        }
+                    });
+                });
+
+                // ── Location-specific inventory quantity lookup ────────────────
+                // inventoryitem search is the only valid way to get qty per location
+                const itemIds     = [];
+                const locationIds = [];
+                Object.keys(linesByOrder).forEach((qtId) => {
+                    linesByOrder[qtId].forEach((line) => {
+                        if (line.item_id && itemIds.indexOf(line.item_id) === -1)
+                            itemIds.push(line.item_id);
+                        if (line.location && locationIds.indexOf(line.location) === -1)
+                            locationIds.push(line.location);
+                    });
+                });
+
+                if (itemIds.length > 0 && locationIds.length > 0) {
+                    // key: "itemId_locationId" → { available, onhand }
+                    const inventoryMap = {};
+                    const invSearch = search.create({
+                        type: search.Type.INVENTORY_ITEM,
+                        filters: [
+                            ['internalid', 'anyof', itemIds],
+                            'AND',
+                            ['inventorylocation', 'anyof', locationIds]
+                        ],
+                        columns: [
+                            search.createColumn({ name: 'internalid' }),
+                            search.createColumn({ name: 'locationquantityavailable' }),
+                            search.createColumn({ name: 'locationquantityonhand' }),
+                            search.createColumn({ name: 'inventorylocation' })
+                        ]
+                    });
+                    invSearch.run().each((r) => {
+                        const iId  = String(r.id);
+                        const loc  = String(r.getValue('inventorylocation'));
+                        const key  = iId + '_' + loc;
+                        inventoryMap[key] = {
+                            available: r.getValue('locationquantityavailable') || null,
+                            onhand   : r.getValue('locationquantityonhand') || null
+                        };
+                        return true;
+                    });
+
+                    // Map quantities back to each line
+                    Object.keys(linesByOrder).forEach((qtId) => {
+                        linesByOrder[qtId].forEach((line) => {
+                            const key  = line.item_id + '_' + line.location;
+                            const data = inventoryMap[key];
+                            if (data) {
+                                line.quantityavailable = data.available;
+                                line.quantityonhand    = data.onhand;
+                            }
+                        });
+                    });
+                }
             }
 
             // ── Merge header + lines ──────────────────────────────────────────
