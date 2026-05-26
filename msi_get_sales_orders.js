@@ -231,6 +231,7 @@ define(['N/search'], (search) => {
                 currency_name : r.getText('currency'),
                 custbody_msi_quotation_no_iec: r.getValue('custbody_msi_quotation_no_iec'),
                 custbody_msi_bank_payment_so : r.getValue('custbody_msi_bank_payment_so'),
+                custbody_msi_bank_payment_so_name : r.getText('custbody_msi_bank_payment_so'),
                 custbody_cseg_cn_cfi         : r.getValue('custbody_cseg_cn_cfi'),
                 intercotransaction           : r.getValue('intercotransaction'),
                 intercotransaction_name      : r.getText('intercotransaction'),

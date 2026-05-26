@@ -134,6 +134,8 @@ define(['N/search', 'N/record'], (search, record) => {
                     'transactionnumber', 'entity', 'account', 'total',
                     'currency', 'exchangerate', 'trandate', 'postingperiod', 'tranid',
                     'custbody_me_wf_created_by', 'approvalstatus', 'subsidiarynohierarchy', 'department',
+                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }), 
+                    'custbody_me_wf_next_approver_blank', 'custbody_me_delegate_approver', 'custbody_me_wf_in_delegation',
                     'class', 'location', 'custbody_cseg_cn_cfi', 'lastmodifieddate'
                 ]
             });
@@ -188,6 +190,10 @@ define(['N/search', 'N/record'], (search, record) => {
                     location_display:                  res.getText('location'),
                     custbody_cseg_cn_cfi:              res.getValue('custbody_cseg_cn_cfi'),
                     custbody_cseg_cn_cfi_display:      res.getText('custbody_cseg_cn_cfi'),
+                    next_approver:                     res.getValue('custworkflow_me_wf_current_approver'),
+                    delegate_approver:                 res.getValue('custbody_me_delegate_approver'),
+                    in_delegation:                     res.getValue('custbody_me_wf_in_delegation'),
+                    next_approver_blank:               res.getValue('custbody_me_wf_next_approver_blank'),
                     last_modified:                     formatToISO(res.getValue('lastmodifieddate')),
                     applied_to:                        [],
                     credit_applied:                    [],
