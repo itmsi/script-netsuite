@@ -131,9 +131,9 @@ define(['N/search', 'N/record'], (search, record) => {
                 columns: [
                     search.createColumn({ name: sortBy, sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
                     'internalid',
-                    'transactionnumber', 'entity', 'account', 'total', 
+                    'transactionnumber', 'entity', 'account', 'total',
                     'currency', 'exchangerate', 'trandate', 'postingperiod', 'tranid',
-                    'custbody_me_wf_created_by', 'approvalstatus', 'subsidiary', 'department',
+                    'custbody_me_wf_created_by', 'approvalstatus', 'subsidiarynohierarchy', 'department',
                     'class', 'location', 'custbody_cseg_cn_cfi', 'lastmodifieddate'
                 ]
             });
@@ -178,8 +178,8 @@ define(['N/search', 'N/record'], (search, record) => {
                     custbody_me_wf_created_by_display: res.getText('custbody_me_wf_created_by'),
                     approvalstatus:                    res.getValue('approvalstatus'),
                     approvalstatus_display:            res.getText('approvalstatus'),
-                    subsidiary:                        res.getValue('subsidiary'),
-                    subsidiary_display:                res.getText('subsidiary'),
+                    subsidiary:                        res.getValue('subsidiarynohierarchy'),
+                    subsidiary_display:                res.getText('subsidiarynohierarchy'),
                     department:                        res.getValue('department'),
                     department_display:                res.getText('department'),
                     class:                             res.getValue('class'),
