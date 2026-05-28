@@ -264,10 +264,28 @@ define(['N/search'], (search) => {
                 const lineSearchCols = [
                     search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
                     search.createColumn({ name: 'linesequencenumber', sort: search.Sort.ASC }),
+                    search.createColumn({ name: 'displayname', join: 'item' }),
                     'item',
                     'memo',
                     'quantity',
                     'quantityshiprecv',
+                    'quantitycommitted',
+                    'quantitypicked',
+                    'quantitypacked',
+                    'quantitybilled',
+                    'custcol_me_tier_price',
+                    'unit',
+                    'pricelevel',
+                    'commitmentfirm',
+                    'orderpriority',
+                    'grossamount',
+                    'taxamount',
+                    'options',
+                    'custcol_msi_booking_fee_so',
+                    'custcol_msi_down_payment_percent',
+                    'custcol_msi_down_payment_amount',
+                    'excludefromraterequest',
+                    'custcol_4601_witaxapplies',
                     'rate',
                     'amount',
                     'location',
@@ -322,16 +340,41 @@ define(['N/search'], (search) => {
                     const rawRate = result.getValue('rate');
                     const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
 
+                    const grossamt = amount + Number(result.getValue('taxamount'));
+
                     linesByOrder[soId].push({
                         line_number   : result.getValue('linesequencenumber') ? Number(result.getValue('linesequencenumber')) : null,
                         item_id       : String(itemId),
                         item_name     : result.getText('item'),
+                        item_displayname: result.getValue({ name: 'displayname', join: 'item' }) || null,
                         description   : result.getValue('memo'),
                         quantity      : quantity,
                         shipped       : shipped,
+                        committed     : result.getValue('quantitycommitted') || 0,
+                        picked        : result.getValue('quantitypicked') || 0,
+                        packed        : result.getValue('quantitypacked') || 0,
+                        fulfilled     : shipped, // using quantityshiprecv as fulfilled
+                        invoiced      : result.getValue('quantitybilled') || 0,
+                        available     : null, // will be populated by inventory lookup
+                        on_hand       : null, // will be populated by inventory lookup
+                        tier_price    : result.getValue('custcol_me_tier_price') || null,
+                        units         : result.getValue('unit') || null,
+                        price_level   : result.getValue('pricelevel') || null,
+                        price_level_name: result.getText('pricelevel') || null,
                         rate          : rate,
                         amount        : amount,
-                        location      : result.getValue('location'),
+                        gross_amt_raw : result.getValue('grossamount'),
+                        gross_amt     : grossamt,
+                        tax_amt       : result.getValue('taxamount'),
+                        tax_rate      : 0, // will be populated by tax lookup
+                        commitment_confirmed: result.getValue('commitmentfirm'),
+                        order_priority: result.getValue('orderpriority'),
+                        options       : result.getValue('options'),
+                        msi_booking_fee_unit: result.getValue('custcol_msi_booking_fee_so'),
+                        msi_down_payment_percent: result.getValue('custcol_msi_down_payment_percent'),
+                        msi_down_payment_amount: result.getValue('custcol_msi_down_payment_amount'),
+                        exclude_item_from_rate_req: result.getValue('excludefromraterequest'),
+                        apply_wh_tax  : result.getValue('custcol_4601_witaxapplies'),
                         location_id   : result.getValue('location') ? String(result.getValue('location')) : null,
                         location_name : result.getText('location'),
                         department    : result.getValue('department'),
@@ -343,6 +386,108 @@ define(['N/search'], (search) => {
                     });
                     return true;
                 });
+
+                // Robust tax rate lookup
+                const taxCodeIds = [];
+                Object.keys(linesByOrder).forEach((soId) => {
+                    linesByOrder[soId].forEach((line) => {
+                        if (line.taxcode && taxCodeIds.indexOf(line.taxcode) === -1) {
+                            taxCodeIds.push(line.taxcode);
+                        }
+                    });
+                });
+
+                const taxRateMap = {};
+                if (taxCodeIds.length > 0) {
+                    const taxSearch = search.create({
+                        type: 'salestaxitem',
+                        filters: [['internalid', 'anyof', taxCodeIds]],
+                        columns: ['rate']
+                    });
+                    taxSearch.run().each((r) => {
+                        const rateStr = r.getValue('rate') || "0%";
+                        taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
+                        return true;
+                    });
+                    
+                    // Fallback search for Tax Groups if needed
+                    const missingIds = taxCodeIds.filter(id => !taxRateMap[id]);
+                    if (missingIds.length > 0) {
+                        const groupSearch = search.create({
+                            type: 'taxgroup',
+                            filters: [['internalid', 'anyof', missingIds]],
+                            columns: ['rate']
+                        });
+                        groupSearch.run().each((r) => {
+                            const rateStr = r.getValue('rate') || "0%";
+                            taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
+                            return true;
+                        });
+                    }
+                }
+
+                // Populate tax rate back to lines
+                Object.keys(linesByOrder).forEach((soId) => {
+                    linesByOrder[soId].forEach((line) => {
+                        if (line.taxcode && taxRateMap[line.taxcode] !== undefined) {
+                            line.tax_rate = taxRateMap[line.taxcode];
+                        }
+                    });
+                });
+
+                // ── Location-specific inventory quantity lookup ────────────────
+                // inventoryitem search is the only valid way to get qty per location
+                const itemIds     = [];
+                const locationIds = [];
+                Object.keys(linesByOrder).forEach((soId) => {
+                    linesByOrder[soId].forEach((line) => {
+                        if (line.item_id && itemIds.indexOf(line.item_id) === -1)
+                            itemIds.push(line.item_id);
+                        if (line.location && locationIds.indexOf(line.location) === -1)
+                            locationIds.push(line.location);
+                    });
+                });
+
+                if (itemIds.length > 0 && locationIds.length > 0) {
+                    // key: "itemId_locationId" → { available, onhand }
+                    const inventoryMap = {};
+                    const invSearch = search.create({
+                        type: search.Type.INVENTORY_ITEM,
+                        filters: [
+                            ['internalid', 'anyof', itemIds],
+                            'AND',
+                            ['inventorylocation', 'anyof', locationIds]
+                        ],
+                        columns: [
+                            search.createColumn({ name: 'internalid' }),
+                            search.createColumn({ name: 'locationquantityavailable' }),
+                            search.createColumn({ name: 'locationquantityonhand' }),
+                            search.createColumn({ name: 'inventorylocation' })
+                        ]
+                    });
+                    invSearch.run().each((r) => {
+                        const iId  = String(r.id);
+                        const loc  = String(r.getValue('inventorylocation'));
+                        const key  = iId + '_' + loc;
+                        inventoryMap[key] = {
+                            available: r.getValue('locationquantityavailable') || null,
+                            onhand   : r.getValue('locationquantityonhand') || null
+                        };
+                        return true;
+                    });
+
+                    // Map quantities back to each line
+                    Object.keys(linesByOrder).forEach((soId) => {
+                        linesByOrder[soId].forEach((line) => {
+                            const key  = line.item_id + '_' + line.location;
+                            const data = inventoryMap[key];
+                            if (data) {
+                                line.available = data.available;
+                                line.on_hand   = data.onhand;
+                            }
+                        });
+                    });
+                }
             }
 
             // ── Merge header + lines ──────────────────────────────────────────
