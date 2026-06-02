@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  */
-define(['N/search'], (search) => {
+define(['N/search', 'N/log'], (search, log) => {
 
     // Konversi tanggal NetSuite ("2/1/2029" atau "10/2/2026 2:22 PM") ke ISO 8601
     const formatToISO = (dateStr) => {
@@ -151,6 +151,8 @@ define(['N/search'], (search) => {
                 'custbody_cseg_cn_cfi',
                 'intercotransaction',
                 'custbody_me_approval_status',
+                'custbody_me_wf_next_approver_blank',
+                'custbody_msi_createdby_api',
                 'intercostatus',
                 'startdate',
                 'enddate',
@@ -162,6 +164,9 @@ define(['N/search'], (search) => {
                 if (name === sortColName) colDef.sort = sortDir;
                 return search.createColumn(colDef);
             });
+
+            // Workflow join column must be added separately (has a 'join' property)
+            columns.push(search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }));
 
             // internalid sort (not in columnDefs) — prepend if needed
             if (sortColName === 'internalid') {
@@ -238,6 +243,8 @@ define(['N/search'], (search) => {
                 intercostatus                : r.getValue('intercostatus'),
                 custbody_me_approval_status  : r.getValue('custbody_me_approval_status'),
                 custbody_me_approval_status_name : r.getText('custbody_me_approval_status'),
+                nextapprover:                 r.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }) || r.getValue('custbody_me_wf_next_approver_blank'),
+                custbody_msi_createdby_api : r.getValue('custbody_msi_createdby_api'),
                 intercostatus_name           : r.getText('intercostatus'),
                 total_amount                 : r.getValue('amount') !== '' && r.getValue('amount') !== null ? r.getValue('amount') : 0,
                 last_modified : formatToISO(r.getValue('lastmodifieddate')),
@@ -490,10 +497,132 @@ define(['N/search'], (search) => {
                 }
             }
 
-            // ── Merge header + lines ──────────────────────────────────────────
+            // ── Search User Notes ─────────────────────────────────────────────
+            const notesByOrder = {};
+            if (soIds.length > 0) {
+                const noteSearch = search.create({
+                    type: 'note',
+                    filters: [
+                        search.createFilter({
+                            name: 'internalid',
+                            join: 'transaction',
+                            operator: search.Operator.ANYOF,
+                            values: soIds
+                        })
+                    ],
+                    columns: [
+                        'internalid',
+                        search.createColumn({ name: 'internalid', join: 'transaction' }),
+                        'title', 'note', 'notedate', 'author', 'direction', 'notetype'
+                    ]
+                });
+
+                const processedNoteIds = {};
+                const fetchSearchResults2 = (searchObj, callback) => {
+                    let start = 0;
+                    const ps = 1000;
+                    const resultSet = searchObj.run();
+                    while (true) {
+                        const results = resultSet.getRange({ start, end: start + ps });
+                        if (!results || results.length === 0) break;
+                        for (let i = 0; i < results.length; i++) {
+                            if (callback(results[i]) === false) break;
+                        }
+                        if (results.length < ps) break;
+                        start += ps;
+                    }
+                };
+
+                fetchSearchResults2(noteSearch, res => {
+                    const noteRecordId = res.id;
+                    if (processedNoteIds[noteRecordId]) return true;
+                    processedNoteIds[noteRecordId] = true;
+
+                    const soId = res.getValue({ name: 'internalid', join: 'transaction' });
+                    if (!notesByOrder[soId]) notesByOrder[soId] = [];
+
+                    notesByOrder[soId].push({
+                        title:     res.getValue('title'),
+                        note:      res.getValue('note'),
+                        date:      res.getValue('notedate'),
+                        author:    res.getText('author'),
+                        direction: res.getValue('direction'),
+                        type:      res.getText('notetype')
+                    });
+                    return true;
+                });
+            }
+
+            // ── Search Attached Files via Custom Record ───────────────────────
+            const filesByOrder = {};
+            if (soIds.length > 0) {
+                try {
+                    // custrecord_msi_transaction_id is Free-Form Text, no ANYOF support
+                    // Build OR conditions: [id1] OR [id2] OR ...
+                    const idOrFilters = [];
+                    soIds.forEach((id, i) => {
+                        if (i > 0) idOrFilters.push('OR');
+                        idOrFilters.push(['custrecord_msi_transaction_id', 'is', String(id)]);
+                    });
+
+                    const fileSearch = search.create({
+                        type: 'customrecord_msi_web_url_file',
+                        filters: [
+                            idOrFilters,
+                            'AND',
+                            ['isinactive', 'is', 'F']
+                        ],
+                        columns: [
+                            'name',
+                            'custrecord_msi_transaction_id',
+                            'custrecord_msi_web_url',
+                            'custrecord_msi_createdby_api_file'
+                        ]
+                    });
+
+                    const processedFileIds = {};
+                    const fetchSearchResults3 = (searchObj, callback) => {
+                        let start = 0;
+                        const ps = 1000;
+                        const resultSet = searchObj.run();
+                        while (true) {
+                            const results = resultSet.getRange({ start, end: start + ps });
+                            if (!results || results.length === 0) break;
+                            for (let i = 0; i < results.length; i++) {
+                                if (callback(results[i]) === false) break;
+                            }
+                            if (results.length < ps) break;
+                            start += ps;
+                        }
+                    };
+
+                    fetchSearchResults3(fileSearch, res => {
+                        const fileRecordId = res.id;
+                        if (processedFileIds[fileRecordId]) return true;
+                        processedFileIds[fileRecordId] = true;
+
+                        const soId = res.getValue('custrecord_msi_transaction_id');
+                        if (!soId) return true;
+                        if (!filesByOrder[soId]) filesByOrder[soId] = [];
+                        filesByOrder[soId].push({
+                            id:             res.id,
+                            fileName:       res.getValue('name'),
+                            fileUrl:        res.getValue('custrecord_msi_web_url'),
+                            created_by_api: res.getValue('custrecord_msi_createdby_api_file')
+                        });
+                        return true;
+                    });
+                } catch (e) {
+                    log.error('SO File Search Error', e.message);
+                }
+            }
+
+            // ── Merge header + lines + notes + files ──────────────────────────
             const data = headers.map(h => ({
                 ...h,
-                items: linesByOrder[h.id] || []
+                items:      linesByOrder[h.id]      || [],
+                user_notes: notesByOrder[h.id]      || [],
+                files:      filesByOrder[String(h.id)] || []
             }));
 
             return {

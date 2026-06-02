@@ -2,9 +2,10 @@
  * @NApiVersion 2.x
  * @NScriptType Restlet
  */
-define(['N/record','N/format'], function (record, format) {
+define(['N/record','N/format','N/search'], function (record, format, search) {
 
     function post(context) {
+        var files = context.files;
         try {            
           if (context.id) {
                 po = record.load({
@@ -55,8 +56,6 @@ define(['N/record','N/format'], function (record, format) {
             }
 
             // ===== HEADER =====
-            
-
             if (context.purchasedate) {
                 var purchaseDateObj = format.parse({
                   value: context.purchasedate,
@@ -248,9 +247,88 @@ define(['N/record','N/format'], function (record, format) {
             });
 
             var poId = po.save();
+
+/// =========================
+// ATTACH MULTIPLE FILE (URL)
+// =========================
+if (context.id) {    
+        var recFileSearch = search.create({
+            type: 'customrecord_msi_web_url_file',
+            filters: [
+               ['custrecord_msi_transaction_id', 'is', context.id],
+                'AND',
+                ['isinactive', 'is', 'F']
+            ],
+            columns: ['internalid']
+        });
+  
+  recFileSearch.run().each(function(result) {
+    var recId = result.getValue('internalid');
+
+        log.debug("fileid", recId);
+
+        record.submitFields({
+            type: 'customrecord_msi_web_url_file',
+            id: recId,
+            values: {
+                isinactive: true
+            },
+            options: {
+                enableSourcing: false,
+                ignoreMandatoryFields: true
+            }
+        });
+
+    return true;
+});
+}
+          
+var resultfileid = [];
+if (files && files.length > 0) {
+    for (var i = 0; i < files.length; i++) {
+      var recFile = record.create({
+          type: 'customrecord_msi_web_url_file',
+          isDynamic: true
+      });
+      
+      recFile.setValue({
+            fieldId: 'custrecord_msi_web_related_transaction',
+            value: poId 
+      });
+
+       recFile.setValue({
+            fieldId: 'custrecord_msi_transaction_id',
+            value: poId 
+      });
+
+      recFile.setValue({
+            fieldId: 'name',
+            value: files[i].fileName 
+      });
+
+       recFile.setValue({
+            fieldId: 'custrecord_msi_web_url',
+            value: files[i].fileUrl 
+      });
+
+      recFile.setValue({
+            fieldId: 'custrecord_msi_createdby_api_file',
+            value: context.custbody_msi_createdby_api
+      });
+
+      var idFile = recFile.save();
+      resultfileid.push({
+          success: true,
+          idFile: idFile,
+          index: i
+      });
+    }
+}
+          
             return {
                 success: true,
-                poId: poId
+                poId: poId,
+                resultfile : resultfileid
             };
 
         } catch (e) {
