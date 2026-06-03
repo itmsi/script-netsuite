@@ -272,47 +272,95 @@ define(['N/search'], (search) => {
                 });
             }
 
-            // Search Workflow History (Menggunakan System Notes)
+            // ── Workflow History via Transaction Search Join ────────────────────────
             let workflowByBill = {};
             if (foundBillIds.length > 0) {
                 try {
-                    let sysNoteSearch = search.create({
-                        type: search.Type.TRANSACTION,
+                    let wfSearch = search.create({
+                        type: search.Type.VENDOR_BILL,
                         filters: [
                             ['internalid', 'anyof', foundBillIds],
                             'AND',
-                            ['mainline', 'is', 'T'],
-                            'AND',
-                            ['systemnotes.date', 'isnotempty', '']
+                            ['mainline', 'is', 'T']
                         ],
                         columns: [
-                            'internalid',
-                            search.createColumn({ name: 'date', join: 'systemnotes', sort: search.Sort.ASC }),
-                            search.createColumn({ name: 'name', join: 'systemnotes' }),
-                            search.createColumn({ name: 'field', join: 'systemnotes' }),
-                            search.createColumn({ name: 'oldvalue', join: 'systemnotes' }),
-                            search.createColumn({ name: 'newvalue', join: 'systemnotes' })
+                            search.createColumn({ name: 'internalid' }),
+                            search.createColumn({ name: 'workflow', join: 'workflowHistory' }),
+                            search.createColumn({ name: 'options', join: 'workflowHistory' }),
+                            search.createColumn({ name: 'notes', join: 'workflowHistory' }),
+                            search.createColumn({ name: 'formulatext', formula: '{workflowhistory.dateenteredstate}', sort: search.Sort.DESC }),
+                            search.createColumn({ name: 'formulatext', formula: '{workflowhistory.dateexitedstate}' })
                         ]
                     });
 
-                    sysNoteSearch.run().each(res => {
-                        let billId = res.getValue('internalid');
-                        if (!workflowByBill[billId]) workflowByBill[billId] = [];
+                    let pagedData = wfSearch.runPaged({ pageSize: 1000 });
 
-                        workflowByBill[billId].push({
-                            date_created:  formatToISO(res.getValue({ name: 'date', join: 'systemnotes' })),
-                            user_changed:  res.getValue({ name: 'name', join: 'systemnotes' }),
-                            user_display:  res.getText({ name: 'name', join: 'systemnotes' }) || res.getValue({ name: 'name', join: 'systemnotes' }),
-                            field:         res.getValue({ name: 'field', join: 'systemnotes' }),
-                            field_display: res.getText({ name: 'field', join: 'systemnotes' }) || res.getValue({ name: 'field', join: 'systemnotes' }),
-                            old_value:     res.getValue({ name: 'oldvalue', join: 'systemnotes' }),
-                            new_value:     res.getValue({ name: 'newvalue', join: 'systemnotes' })
+                    pagedData.pageRanges.forEach(function(pageRange) {
+                        let page = pagedData.fetch({ index: pageRange.index });
+                        page.data.forEach(function(res) {
+                            let docId = res.getValue('internalid');
+                            let workflowType = res.getText({ name: 'workflow', join: 'workflowHistory' });
+                            
+                            if (workflowType) {
+                                // parse NetSuite raw options string into an object
+                                let rawOptions = res.getValue({ name: 'options', join: 'workflowHistory' }) || '';
+                                let parsedOptions = {};
+                                
+                                if (rawOptions) {
+                                    // Hilangkan tanda + agar consecutive delimiters tidak di-merge menjadi satu, sehingga string kosong tetap terbaca
+                                    let parts = rawOptions.split(/[\x00-\x1F]/);
+                                    let i = 0;
+                                    let isFieldId = (str) => str && ((str.toUpperCase() === str && str.includes('_')) || str.toLowerCase().startsWith('cust'));
+                                    
+                                    while (i < parts.length) {
+                                        let p = parts[i];
+                                        if (!p) {
+                                            i++;
+                                            continue;
+                                        }
+                                        
+                                        if (isFieldId(p)) {
+                                            let typeInd = parts[i + 1];
+                                            let label = parts[i + 2];
+                                            let internalVal = parts[i + 3];
+                                            let displayVal = parts[i + 4];
+                                            
+                                            if (typeInd && typeInd.length === 1 && label) {
+                                                if (isFieldId(displayVal) || displayVal === undefined) {
+                                                    parsedOptions[label] = internalVal || '';
+                                                    i += 4;
+                                                } else {
+                                                    parsedOptions[label] = displayVal;
+                                                    parsedOptions[label + ' Id'] = internalVal || '';
+                                                    i += 5;
+                                                }
+                                                continue;
+                                            }
+                                        }
+                                        i++;
+                                    }
+                                }
+
+                                if (!workflowByBill[docId]) workflowByBill[docId] = [];
+                                workflowByBill[docId].push({
+                                    workflow:     workflowType,
+                                    date_entered: formatToISO(res.getValue({ name: 'formulatext', formula: '{workflowhistory.dateenteredstate}' })),
+                                    date_exited:  formatToISO(res.getValue({ name: 'formulatext', formula: '{workflowhistory.dateexitedstate}' })),
+                                    options_obj:  parsedOptions,
+                                    options:      rawOptions.replace(/[\x00-\x1F]/g, ' | '),
+                                    notes:        res.getValue({ name: 'notes', join: 'workflowHistory' })
+                                });
+                            }
                         });
-
-                        return true;
                     });
                 } catch (wfErr) {
-                    // Abaikan jika error
+                    pagedHeaders.forEach(h => {
+                        h.workflow_history_error = {
+                            name:    wfErr.name    || 'UnknownError',
+                            message: wfErr.message || String(wfErr),
+                            stack:   wfErr.stack   || null
+                        };
+                    });
                 }
             }
 
