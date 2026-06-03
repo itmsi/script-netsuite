@@ -21,7 +21,7 @@
  }
  */
 
-define(['N/search'], (search) => {
+define(['N/search', 'N/record'], (search, record) => {
     function formatToISO(dateStr) {
         if (!dateStr) return null;
 
@@ -179,6 +179,39 @@ define(['N/search'], (search) => {
                     datecreated:          formatToISO(res.getValue('datecreated'))
                 });
             });
+            
+            let descriptionMap = {};
+
+            foundReceiptIds.forEach(receiptId => {
+
+                let rec = record.load({
+                    type: record.Type.ITEM_RECEIPT,
+                    id: receiptId
+                });
+
+                let lineCount = rec.getLineCount({
+                    sublistId: 'item'
+                });
+
+                descriptionMap[receiptId] = {};
+
+                for (let i = 0; i < lineCount; i++) {
+
+                    let lineNum = rec.getSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'line',
+                        line: i
+                    });
+
+                    let desc = rec.getSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'description',
+                        line: i
+                    });
+
+                    descriptionMap[receiptId][lineNum] = desc;
+                }
+            });
 
             // ── Search Line Items ─────────────────────────────────────────────
             let linesByReceipt = {};
@@ -207,12 +240,14 @@ define(['N/search'], (search) => {
 
                 lineSearch.run().each(res => {
                     let receiptId = res.getValue('internalid');
+                    let lineNum = res.getValue('line'); 
                     if (!linesByReceipt[receiptId]) linesByReceipt[receiptId] = [];
 
                     linesByReceipt[receiptId].push({
                         line:               res.getValue('line'),
                         item:               res.getValue('item'),
                         item_display:       res.getText('item'),
+                        description:        descriptionMap[receiptId] && descriptionMap[receiptId][lineNum] ? descriptionMap[receiptId][lineNum] : '',
                         quantity:           res.getValue('quantity'),
                         rate:               res.getValue('rate'),
                         amount:             res.getValue('amount'),
