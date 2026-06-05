@@ -276,7 +276,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     ],
                     columns: [
                         'internalid', 'line', 'lineuniquekey', 'item', 'itemtype', 'quantity','quantityshiprecv', 'quantitybilled', 
-                        'rate', 'amount', 'taxamount', 'taxcode', 'memo', 
+                        'rate', 'amount', 'fxamount', 'taxamount', 'taxcode', 'memo', 
                         'location', 'department', 'class',
                         'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost'
                     ]
@@ -285,6 +285,25 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 fetchSearchResults(lineSearch, res => {
                     let poId = res.getValue('internalid');
                     if (!linesByPo[poId]) linesByPo[poId] = [];
+                    
+                    // Gunakan foreign amount jika ada (untuk currency asing), jika tidak gunakan amount lokal
+                    let fxAmt = res.getValue('fxamount');
+                    let baseAmt = res.getValue('amount');
+                    let quantity = Number(res.getValue('quantity')) || 1;
+                    let lineAmount = fxAmt || baseAmt;  // gunakan fxamount jika ada, jika tidak gunakan amount
+                    
+                    // Scale tax ke currency asing jika ada foreign amount
+                    let baseTaxAmt = res.getValue('taxamount');
+                    let lineTaxAmt;
+                    if (fxAmt && baseAmt && baseAmt !== 0) {
+                        // Scale tax proportionally ke foreign currency
+                        lineTaxAmt = (fxAmt / baseAmt) * baseTaxAmt;
+                    } else {
+                        lineTaxAmt = baseTaxAmt;
+                    }
+                    
+                    // Hitung rate dalam currency asing (amount per unit)
+                    let lineRate = quantity > 0 ? (lineAmount / quantity) : lineAmount;
 
                     linesByPo[poId].push({
                         transaction:        poId,
@@ -296,10 +315,10 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         quantity:           res.getValue('quantity'),
                         quantitybilled:     res.getValue('quantitybilled'),
                         quantityreceived:   res.getValue('quantityshiprecv'),
-                        rate:               res.getValue('rate'),
-                        netamount:          res.getValue('amount'),
-                        tax1amt:            Math.abs(res.getValue('taxamount')),
-                        grossamt:           Math.abs(res.getValue('amount')) + Math.abs(res.getValue('taxamount')),
+                        rate:               lineRate,
+                        netamount:          lineAmount,
+                        tax1amt:            Math.abs(lineTaxAmt),
+                        grossamt:           Math.abs(lineAmount) + Math.abs(lineTaxAmt),
                         taxcode:            res.getValue('taxcode'),
                         taxcode_display:    res.getText('taxcode'),
                         taxrate1:           res.getValue('taxrate'),
