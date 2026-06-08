@@ -190,9 +190,11 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
 
             let pagedHeaders = [];
             let foundPoIds   = [];
+            let currencyByPo = {};
 
             searchResults.forEach(res => {
                 foundPoIds.push(res.id);
+                currencyByPo[res.id] = res.getText('currency');
                 pagedHeaders.push({
                     po_id:                             res.id,
                     po_number:                         res.getValue('tranid'),
@@ -276,7 +278,18 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     ],
                     columns: [
                         'internalid', 'line', 'lineuniquekey', 'item', 'itemtype', 'quantity','quantityshiprecv', 'quantitybilled', 
-                        'rate', 'amount', 'fxamount', 'taxamount', 'taxcode', 'memo', 
+                        'rate', 'amount', 'fxamount', 'taxamount',
+                        search.createColumn({
+                            name: 'formulanumericrate',
+                            formula: '{fxamount} / NULLIF({quantity}, 0)',
+                            label: 'Rate Foreign'
+                        }),
+                        search.createColumn({
+                            name: 'formulanumeric',
+                            formula: '{taxamount} / NULLIF({exchangerate}, 0)',
+                            label: 'Tax Amount Foreign'
+                        }),
+                        'grossamount', 'taxcode', 'memo', 
                         'location', 'department', 'class',
                         'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost'
                     ]
@@ -286,24 +299,22 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     let poId = res.getValue('internalid');
                     if (!linesByPo[poId]) linesByPo[poId] = [];
                     
-                    // Gunakan foreign amount jika ada (untuk currency asing), jika tidak gunakan amount lokal
+                    let quantity = Number(res.getValue('quantity')) || 1;
                     let fxAmt = res.getValue('fxamount');
                     let baseAmt = res.getValue('amount');
-                    let quantity = Number(res.getValue('quantity')) || 1;
                     let lineAmount = fxAmt || baseAmt;  // gunakan fxamount jika ada, jika tidak gunakan amount
                     
-                    // Scale tax ke currency asing jika ada foreign amount
-                    let baseTaxAmt = res.getValue('taxamount');
-                    let lineTaxAmt;
-                    if (fxAmt && baseAmt && baseAmt !== 0) {
-                        // Scale tax proportionally ke foreign currency
-                        lineTaxAmt = (fxAmt / baseAmt) * baseTaxAmt;
-                    } else {
-                        lineTaxAmt = baseTaxAmt;
+                    let rateValue = res.getValue('rate');
+                    let taxValue = res.getValue('taxamount');
+                    let poCurrency = currencyByPo[poId] || null;
+                    if (poCurrency && poCurrency !== 'IDR') {
+                        rateValue = res.getValue({ name: 'formulanumericrate' });
+                        taxValue = res.getValue({ name: 'formulanumeric' });
                     }
                     
-                    // Hitung rate dalam currency asing (amount per unit)
-                    let lineRate = quantity > 0 ? (lineAmount / quantity) : lineAmount;
+                    let lineRate = quantity > 0 ? Number(rateValue) : Number(lineAmount);
+                    let lineTaxAmt = Number(taxValue) || 0;
+                    let grossAmt = (Math.abs(lineAmount) + Math.abs(lineTaxAmt));
 
                     linesByPo[poId].push({
                         transaction:        poId,
@@ -318,7 +329,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         rate:               lineRate,
                         netamount:          lineAmount,
                         tax1amt:            Math.abs(lineTaxAmt),
-                        grossamt:           Math.abs(lineAmount) + Math.abs(lineTaxAmt),
+                        grossamt:           grossAmt,
                         taxcode:            res.getValue('taxcode'),
                         taxcode_display:    res.getText('taxcode'),
                         taxrate1:           res.getValue('taxrate'),
