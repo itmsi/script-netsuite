@@ -211,6 +211,12 @@ define(['N/search'], (search) => {
                 datecreated                  : formatToISO(r.getValue('datecreated'))
             }));
 
+            // ── Build currency map dari headers ──────────────────────────────
+            const currencyByQt = {};
+            headers.forEach(h => {
+                currencyByQt[h.id] = h.currency_name;
+            });
+
             // ── Fetch line items via N/search ─────────────────────────────────
             const qtIds = headers.map(h => h.id);
             const linesByOrder = {};
@@ -239,6 +245,17 @@ define(['N/search'], (search) => {
                     'unit',
                     'rate',
                     'amount',
+                    'fxamount',
+                    search.createColumn({
+                        name: 'formulanumericrate',
+                        formula: '{fxamount} / NULLIF({quantity}, 0)',
+                        label: 'Rate Foreign'
+                    }),
+                    search.createColumn({
+                        name: 'formulanumeric',
+                        formula: '{taxamount} / NULLIF({exchangerate}, 0)',
+                        label: 'Tax Amount Foreign'
+                    }),
                     'custcol_4601_witaxapplies',
                     'location',
                     'grossamount',
@@ -287,13 +304,24 @@ define(['N/search'], (search) => {
                     const rawQty = result.getValue('quantity');
                     const quantity = rawQty !== '' && rawQty !== null ? Math.abs(Number(rawQty)) : 0;
                     
-                    const rawAmount = result.getValue('amount');
-                    const amount = rawAmount !== '' && rawAmount !== null ? Math.abs(Number(rawAmount)) : 0;
+                    // ── FX-aware amount & rate ────────────────────────────────
+                    const fxAmt = result.getValue('fxamount');
+                    const baseAmt = result.getValue('amount');
+                    const lineAmount = fxAmt || baseAmt; // gunakan fxamount jika ada, jika tidak gunakan amount
 
-                    const rawRate = result.getValue('rate');
+                    let rateValue = result.getValue('rate');
+                    let taxValue = result.getValue('taxamount');
+                    const qtCurrency = currencyByQt[qtId] || null;
+                    if (qtCurrency && qtCurrency !== 'IDR') {
+                        rateValue = result.getValue({ name: 'formulanumericrate' });
+                        taxValue = result.getValue({ name: 'formulanumeric' });
+                    }
+
+                    const rawRate = rateValue;
                     const rate = rawRate !== '' && rawRate !== null ? Number(rawRate) : null;
 
-                    const grossamt = amount + Number(result.getValue('taxamount'));
+                    const lineTaxAmt = Number(taxValue) || 0;
+                    const grossamt = (Math.abs(lineAmount) + Math.abs(lineTaxAmt));
 
                     linesByOrder[qtId].push({
                         line            : lineNum,
@@ -310,10 +338,9 @@ define(['N/search'], (search) => {
                         description     : result.getValue('memo'),
                         quantity        : quantity,
                         rate            : rate,
-                        amount          : amount,
-                        grossamt_raw    : result.getValue('grossamount'),
+                        amount          : lineAmount,
                         grossamt        : grossamt,
-                        taxamount       : result.getValue('taxamount'),
+                        taxamount       : lineTaxAmt,
                         taxcode         : result.getValue('taxcode'),
                         taxcode_name    : result.getText('taxcode'),
                         taxrate         : 0,
