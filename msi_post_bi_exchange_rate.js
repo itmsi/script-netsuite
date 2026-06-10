@@ -9,6 +9,8 @@
  * Yang diambil:
  *   - USD → IDR
  *   - CNY → IDR
+ *   - CNH → IDR
+ *   - SGD → IDR
  *
  * Rumus: (beli_subkurslokal + jual_subkurslokal) / 2 = final rate
  *
@@ -63,7 +65,7 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
                 return;
             }
 
-            const targetCurrencies = ['USD', 'CNY'];
+            const targetCurrencies = ['USD', 'CNY', 'CNH', 'SGD'];
             let created = 0;
 
             for (let i = 0; i < rates.length; i++) {
@@ -81,8 +83,6 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
                 createOrUpdateExchangeRate(idrId, currencyId, rateInfo.averageRate, wib);
                 created++;
             }
-
-            log.debug('Summary', 'Berhasil sync ' + created + ' exchange rate (USD & CNY) untuk tanggal ' + dateStr);
 
         } catch (e) {
             log.error('Script Error', e.message + (e.stack ? ' | ' + e.stack : ''));
