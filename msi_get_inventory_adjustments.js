@@ -342,7 +342,6 @@ define(['N/search', 'N/query', 'N/log', 'N/record'], (search, query, log, record
                         'quantity',           // adjustqtyby / proposed qty
                         'custcol_me_landed_cost_ia',
                         'custcol_me_purchase_number_line',
-                        'custcol_me_landed_cost',
                         'custcol_me_proposed_lot_num_txt',
                         'custcol_me_proposed_lot_qty',
                         'custcol_me_proposed_qty',
@@ -372,7 +371,6 @@ define(['N/search', 'N/query', 'N/log', 'N/record'], (search, query, log, record
                         adjustqtyby: res.getValue('quantity'),
                         custcol_me_landed_cost_ia: res.getValue('custcol_me_landed_cost_ia'),
                         custcol_me_purchase_number_line: res.getValue('custcol_me_purchase_number_line'),
-                        custcol_me_landed_cost: res.getValue('custcol_me_landed_cost'),
                         custcol_me_proposed_lot_num_txt: res.getValue('custcol_me_proposed_lot_num_txt'),
                         custcol_me_proposed_qty: res.getValue('custcol_me_proposed_qty'),
                         custcol_me_proposed_unit_cost: res.getValue('custcol_me_proposed_unit_cost'),
@@ -411,8 +409,9 @@ define(['N/search', 'N/query', 'N/log', 'N/record'], (search, query, log, record
                                 units_display: iaRecord.getSublistText({ sublistId: 'inventory', fieldId: 'units', line: i }) || null,
                                 description: iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'description', line: i }) || null,
                                 quantityonhand: (function(v) { return v !== null && v !== undefined ? Number(v) : null; })(iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'quantityonhand', line: i })),
-                                currentvalue: (function(v) { return v !== null && v !== undefined ? Number(v) : null; })(iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'currentvalue', line: i })),
-                                newquantity: (function(v) { return v !== null && v !== undefined ? Number(v) : null; })(iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'newquantity', line: i }))
+                                currentvalue: iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'currentvalue', line: i }) || null,
+                                newquantity: (function(v) { return v !== null && v !== undefined ? Number(v) : null; })(iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'newquantity', line: i })),
+                                inventorydetail: (function(v) { return v !== null && v !== undefined ? Number(v) : null; })(iaRecord.getSublistValue({ sublistId: 'inventory', fieldId: 'inventorydetail', line: i }))
                             };
                         }
                     } catch (e) {
@@ -421,54 +420,7 @@ define(['N/search', 'N/query', 'N/log', 'N/record'], (search, query, log, record
                 });
             }
 
-            // ── Ambil Inventory Detail per Line via Search ──────────────────────
-            let inventoryByLineKey = {};
-            if (foundIaIds.length > 0) {
-                try {
-                    let invDetailSearch = search.create({
-                        type: 'inventorydetail',
-                        filters: [
-                            search.createFilter({
-                                name: 'internalid',
-                                join: 'transaction',
-                                operator: search.Operator.ANYOF,
-                                values: foundIaIds
-                            })
-                        ],
-                        columns: [
-                            search.createColumn({ name: 'internalid', join: 'transaction' }),
-                            'line',
-                            'quantity',
-                            'inventorynumber',
-                            'expirationdate',
-                            'manualno',
-                            search.createColumn({ name: 'quantity', join: 'inventorynumber' }),
-                            search.createColumn({ name: 'lotnumber', join: 'inventorynumber' })
-                        ]
-                    });
 
-                    fetchSearchResults(invDetailSearch, res => {
-                        let iaId = res.getValue({ name: 'internalid', join: 'transaction' });
-                        let lineNum = res.getValue('line');
-                        let key = `${iaId}_${lineNum}`;
-
-                        if (!inventoryByLineKey[key]) inventoryByLineKey[key] = [];
-
-                        inventoryByLineKey[key].push({
-                            inventorynumber_id: res.getValue('inventorynumber'),
-                            inventorynumber_text: res.getText('inventorynumber'),
-                            lotnumber: res.getText({ name: 'lotnumber', join: 'inventorynumber' }),
-                            quantity: res.getValue('quantity'),
-                            quantity_onhand: res.getValue({ name: 'quantity', join: 'inventorynumber' }),
-                            expirationdate: res.getValue('expirationdate'),
-                            manualno: res.getValue('manualno')
-                        });
-                        return true;
-                    });
-                } catch (e) {
-                    log.error('Inventory Detail Search Error', e.message);
-                }
-            }
 
             // ── Search User Notes ─────────────────────────────────────────────
             let notesByIa = {};
@@ -570,10 +522,9 @@ define(['N/search', 'N/query', 'N/log', 'N/record'], (search, query, log, record
                     line.units_display = det.units_display || null;
                     line.description = det.description || null;
                     line.quantityonhand = det.quantityonhand !== null && det.quantityonhand !== undefined ? det.quantityonhand : null;
-                    line.currentvalue = det.currentvalue !== null && det.currentvalue !== undefined ? det.currentvalue : null;
+                    line.currentvalue = det.currentvalue || "0.00";
                     line.newquantity = det.newquantity !== null && det.newquantity !== undefined ? det.newquantity : null;
-                    let invKey = `${header.id}_${line.linesequencenumber}`;
-                    line.inventory_detail = inventoryByLineKey[invKey] || [];
+                    line.inventorydetail = det.inventorydetail || null;
                 });
 
                 header.lines = lines;
