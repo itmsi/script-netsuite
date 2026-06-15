@@ -457,7 +457,7 @@ define(['N/search', 'N/query', 'N/log', 'N/record'], (search, query, log, record
                         date: res.getValue('notedate'),
                         author: res.getText('author'),
                         direction: res.getValue('direction'),
-                        type: res.getText('notetype')
+                        type: res.getValue('notetype')
                     });
                     return true;
                 });

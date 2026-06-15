@@ -68,6 +68,15 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
             const targetCurrencies = ['USD', 'CNY', 'CNH', 'SGD'];
             let created = 0;
 
+            // ── 4. Siapkan format date ───────────────────────────────────────
+            // Format untuk BI URL: YYYY-MM-DD (sudah ada dateStr)
+            // Format untuk NetSuite: D/M/YYYY (contoh: 15/6/2026)
+            const year   = wib.getUTCFullYear();
+            const month  = wib.getUTCMonth() + 1; // 1-based
+            const day    = wib.getUTCDate();
+            const dateStrNS = day + '/' + month + '/' + year;
+            const effectiveDate = new Date(year, month - 1, day); // midnight lokal
+
             for (let i = 0; i < rates.length; i++) {
                 const rateInfo = rates[i];
 
@@ -80,13 +89,33 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
                     continue;
                 }
 
-                createOrUpdateExchangeRate(idrId, currencyId, rateInfo.averageRate, wib);
-                created++;
+                const result = createOrUpdateExchangeRate(idrId, currencyId, rateInfo.averageRate, effectiveDate, dateStr, dateStrNS);
+                if (result) {
+                    created++;
+                    log.debug('Save Success', rateInfo.currencyCode + ': ' + result.action + ' (ID: ' + result.recordId + ', Rate: ' + rateInfo.averageRate + ')');
+                } else {
+                    log.debug('Save Failed', rateInfo.currencyCode + ': gagal disave, cek log error di atas');
+                }
             }
+
+            log.audit('Selesai', 'Berhasil sync ' + created + ' exchange rate untuk tanggal ' + dateStr);
 
         } catch (e) {
             log.error('Script Error', e.message + (e.stack ? ' | ' + e.stack : ''));
         }
+    };
+
+    // ─── Helper: Rounding ──────────────────────────────────────────────────────
+
+    /**
+     * Bulatkan ke atas (ceiling) hingga max 3 digit desimal
+     * Contoh: 17921.4567 → 17921.457, 13947.955 → 13947.955, 2650 → 2650
+     */
+    const roundUpTo3Decimals = (num, label) => {
+        const hasMoreThan3Decimals = (num * 1000) % 1 !== 0;
+        const result = hasMoreThan3Decimals ? Math.ceil(num * 1000) / 1000 : num;
+
+        return result;
     };
 
     // ─── Helper: Parse XML BI ──────────────────────────────────────────────────
@@ -117,13 +146,16 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
 
             if (isNaN(beli) || isNaN(jual) || beli <= 0 || jual <= 0) continue;
 
-            const average = (beli + jual) / 2;
+            let average = (beli + jual) / 2;
+
+            // Bulatkan ke atas max 3 digit desimal
+            const rounded = roundUpTo3Decimals(average, currencyCode);
 
             results.push({
                 currencyCode,
                 buyRate:   beli,
                 sellRate:  jual,
-                averageRate: average
+                averageRate: rounded
             });
         }
 
@@ -155,14 +187,9 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
     /**
      * Buat atau update currency exchange rate record
      */
-    const createOrUpdateExchangeRate = (baseCurrencyId, currencyId, rateValue, effectiveDate) => {
+    const createOrUpdateExchangeRate = (baseCurrencyId, currencyId, rateValue, effectiveDate, dateStrYmd, dateStrNS) => {
         try {
-            // Cek apakah sudah ada record untuk base+currency+date yg sama
-            const year  = effectiveDate.getFullYear();
-            const month = String(effectiveDate.getMonth() + 1).padStart(2, '0');
-            const day   = String(effectiveDate.getDate()).padStart(2, '0');
-            const dateStr = month + '/' + day + '/' + year;
-
+            // Cari record yang sudah ada
             const existingSearch = search.create({
                 type: 'currencyrate',
                 filters: [
@@ -170,49 +197,38 @@ define(['N/https', 'N/record', 'N/log', 'N/search'], (https, record, log, search
                     'AND',
                     ['transactioncurrency', 'anyof', currencyId],
                     'AND',
-                    ['effectivedate', 'on', dateStr]
+                    ['effectivedate', 'on', dateStrNS]
                 ],
                 columns: ['internalid', 'exchangerate']
             });
 
             const existingResults = existingSearch.run().getRange({ start: 0, end: 1 });
 
-            let recordId;
-            let action;
-
+            // currencyrate adalah system record — tidak bisa di-update via SuiteScript
+            // Solusi: delete existing (jika ada) lalu create baru
             if (existingResults && existingResults.length > 0) {
-                // ── UPDATE yang sudah ada ──
                 const existingId = existingResults[0].id;
-                record.submitFields({
+                record.delete({
                     type: 'currencyrate',
-                    id: existingId,
-                    values: {
-                        exchangerate: rateValue
-                    },
-                    options: {
-                        enableSourcing: false,
-                        ignoreMandatoryFields: true
-                    }
+                    id: existingId
                 });
-                recordId = existingId;
-                action = 'Updated';
-            } else {
-                // ── CREATE baru ──
-                const cr = record.create({
-                    type: 'currencyrate',
-                    isDynamic: true
-                });
-
-                cr.setValue({ fieldId: 'basecurrency',        value: baseCurrencyId });
-                cr.setValue({ fieldId: 'transactioncurrency', value: currencyId });
-                cr.setValue({ fieldId: 'exchangerate',  value: rateValue });
-                cr.setValue({ fieldId: 'effectivedate', value: effectiveDate });
-
-                recordId = cr.save();
-                action = 'Created';
             }
 
+            // ── CREATE baru ──
+            const cr = record.create({
+                type: 'currencyrate'
+            });
+
+            cr.setValue({ fieldId: 'basecurrency',        value: baseCurrencyId });
+            cr.setValue({ fieldId: 'transactioncurrency', value: currencyId });
+            cr.setValue({ fieldId: 'exchangerate',  value: rateValue });
+            cr.setValue({ fieldId: 'effectivedate', value: effectiveDate });
+
+            const recordId = cr.save();
+            const action = existingResults && existingResults.length > 0 ? 'Recreated' : 'Created';
+
             return { action, recordId };
+            log.debug('Create/Update Success', action + ' exchange rate record ID: ' + recordId + ' | Currency: ' + currencyId + ' | Rate: ' + rateValue);
 
         } catch (e) {
             log.error('Failed to save exchange rate',
