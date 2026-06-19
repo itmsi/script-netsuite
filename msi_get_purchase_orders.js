@@ -300,7 +300,8 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     let poId = res.getValue('internalid');
                     if (!linesByPo[poId]) linesByPo[poId] = [];
                     
-                    let quantity = Number(res.getValue('quantity')) || 1;
+                    const rawQty = res.getValue('quantity');
+                    const quantity = rawQty !== '' && rawQty !== null ? parseFloat(rawQty) : 0;
                     let fxAmt = res.getValue('fxamount');
                     let baseAmt = res.getValue('amount');
                     let lineAmount = fxAmt || baseAmt;  // gunakan fxamount jika ada, jika tidak gunakan amount
@@ -324,7 +325,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         item:               res.getValue('item'),
                         item_display:       res.getText('item'),
                         itemtype:           res.getValue('itemtype'),
-                        quantity:           res.getValue('quantity'),
+                        quantity:           quantity,
                         quantitybilled:     res.getValue('quantitybilled'),
                         quantityreceived:   res.getValue('quantityshiprecv'),
                         rate:               lineRate,

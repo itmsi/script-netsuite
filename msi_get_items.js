@@ -163,46 +163,77 @@ define(['N/search'], (search) => {
                 locations: []
             };
 
-            const locationSearch = search.create({
-                type: "inventoryitem",
-                filters: [
-                    ["internalid", "is", itemId]
-                ],
-                columns: [
-                    "location",
-                    "inventorylocation",
-                    "locationquantityavailable",
-                    "locationquantityonhand",
-                    "locationquantityonorder",
-                    "locationquantitycommitted",
-                    "locationquantitybackordered",
-                    "locationquantityintransit"
-                ]
-            });
+            // Fetch locations via item search
+            try {
+                var locSearch = search.create({
+                    type: search.Type.ITEM,
+                    filters: [
+                        ["internalid", "anyof", itemId]
+                    ],
+                    columns: [
+                        "internalid",
+                        "inventorylocation",
+                        "locationquantityavailable",
+                        "locationquantityonhand",
+                        "locationquantityonorder",
+                        "locationquantitycommitted",
+                        "locationquantitybackordered"
+                    ]
+                });
 
-            locationSearch.run().each(loc => {
+                // Build locations map (keyed by locationId for quick SN grouping later)
+                var locMap = {};
+                locSearch.run().each(function (row) {
+                    var locId = row.getValue("inventorylocation");
+                    var locName = row.getText("inventorylocation");
+                    if (locId && !locMap[locId]) {
+                        var locObj = {
+                            location: locName || locId,
+                            inventorylocationId: locId,
+                            qtyAvailable: row.getValue("locationquantityavailable") || "0",
+                            qtyOnHand: row.getValue("locationquantityonhand") || "0",
+                            qtyOnOrder: row.getValue("locationquantityonorder") || "0",
+                            qtyCommitted: row.getValue("locationquantitycommitted") || "0",
+                            qtyBackOrder: row.getValue("locationquantitybackordered") || "0",
+                            serialNumbers: []
+                        };
+                        locMap[locId] = locObj;
+                        itemObj.locations.push(locObj);
+                    }
+                    return true;
+                });
 
-                const locName = loc.getText("location");
-                if (locName) {
-                    itemObj.locations.push({
-                        location: locName,
-                        inventorylocation: loc.getText("inventorylocation"),
-                        inventorylocationId: loc.getValue({ name: "inventorylocation" }),
-                        qtyAvailable: loc.getValue("locationquantityavailable") || "0",
-                        qtyOnHand: loc.getValue("locationquantityonhand") || "0",
-                        qtyOnOrder: loc.getValue("locationquantityonorder") || "0",
-                        qtyCommitted: loc.getValue("locationquantitycommitted") || "0",
-                        qtyBackOrder: loc.getValue("locationquantitybackordered") || "0",
-                        qtyInTransit: loc.getValue("locationquantityintransit") || "0"
+                // Fetch serial numbers with location via INVENTORY_NUMBER search
+                var snSearch = search.create({
+                    type: search.Type.INVENTORY_NUMBER,
+                    filters: [
+                        ["item", "anyof", itemId]
+                    ],
+                    columns: [
+                        search.createColumn({ name: "inventorynumber" }),
+                        search.createColumn({ name: "location" })
+                    ]
+                });
 
-                    });
-                }
-                return true;
-            });
+                var seenSn = {};
+                snSearch.run().each(function(snRow) {
+                    var sNum = snRow.getValue("inventorynumber");
+                    var snLocId = snRow.getValue("location");
+                    if (sNum && !seenSn[sNum]) {
+                        seenSn[sNum] = true;
+                        // Insert SN into the matching location
+                        if (snLocId && locMap[snLocId]) {
+                            locMap[snLocId].serialNumbers.push(sNum);
+                        }
+                    }
+                    return true;
+                });
+            } catch (e) {
+                log.debug('Location Load Error', 'Item ' + itemId + ': ' + e.message);
+            }
 
             data.push(itemObj);
         });
-
         return {
             success: true,
             page: page,
