@@ -15,6 +15,7 @@
      "internalid": [1, 2],        // Filter by internal ID (opsional, bisa array)
      "itemid": "ITEM-001",        // Filter by Item ID (opsional)
      "displayname": "Laptop",     // Filter by Display Name (opsional, support contains)
+     "type_id": ["InvtPart"],     // Filter by internal type ID (opsional, array)
      "type": ["InvtPart"]         // Filter by Item Type (opsional, array)
    }
  }
@@ -112,6 +113,9 @@ define(['N/search'], (search) => {
         if (filtersBody.displayname) {
             filters.push("AND", ["displayname", "contains", filtersBody.displayname]);
         }
+        if (filtersBody.type_id) {
+            filters.push("AND", ["type", "anyof", filtersBody.type_id]);
+        }
         if (filtersBody.type) {
             filters.push("AND", ["type", "anyof", filtersBody.type]);
         }
@@ -158,6 +162,7 @@ define(['N/search'], (search) => {
                 internalId: itemId,
                 itemId: item.getValue("itemid"),
                 displayName: item.getValue("displayname"),
+                type_id: item.getValue("type"),
                 type: item.getText("type"),
                 lastModifiedDate: formatToISO(rawDate),
                 locations: []
