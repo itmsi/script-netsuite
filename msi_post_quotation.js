@@ -49,7 +49,7 @@
   ]
 }
  */
-define(['N/record', 'N/format', 'N/log'], (record, format, log) => {
+define(['N/record', 'N/format', 'N/log', 'N/search'], (record, format, log, search) => {
 
     /**
      * Helper: set sublist field hanya jika value ada
@@ -66,6 +66,7 @@ define(['N/record', 'N/format', 'N/log'], (record, format, log) => {
     const post = (context) => {
         try {
             let estimate;
+            const files = context.files;
             const isUpdate = !!context.id;
 
             // ═══════════════════════════════════════════════════════════════
@@ -234,6 +235,83 @@ define(['N/record', 'N/format', 'N/log'], (record, format, log) => {
             // ═══════════════════════════════════════════════════════════════
             const estimateId = estimate.save();
 
+            // =========================
+            // ATTACH MULTIPLE FILE (URL)
+            // =========================
+            if (context.id) {
+                const recFileSearch = search.create({
+                    type: 'customrecord_msi_web_url_file',
+                    filters: [
+                        ['custrecord_msi_transaction_id', 'is', context.id],
+                        'AND',
+                        ['isinactive', 'is', 'F']
+                    ],
+                    columns: ['internalid']
+                });
+
+                recFileSearch.run().each((result) => {
+                    const recId = result.getValue('internalid');
+
+                    log.debug("fileid", recId);
+
+                    record.submitFields({
+                        type: 'customrecord_msi_web_url_file',
+                        id: recId,
+                        values: {
+                            isinactive: true
+                        },
+                        options: {
+                            enableSourcing: false,
+                            ignoreMandatoryFields: true
+                        }
+                    });
+
+                    return true;
+                });
+            }
+
+            const resultfileid = [];
+            if (files && files.length > 0) {
+                for (let i = 0; i < files.length; i++) {
+                    const recFile = record.create({
+                        type: 'customrecord_msi_web_url_file',
+                        isDynamic: true
+                    });
+
+                    recFile.setValue({
+                        fieldId: 'custrecord_msi_web_related_transaction',
+                        value: estimateId
+                    });
+
+                    recFile.setValue({
+                        fieldId: 'custrecord_msi_transaction_id',
+                        value: estimateId
+                    });
+
+                    recFile.setValue({
+                        fieldId: 'name',
+                        value: files[i].fileName
+                    });
+
+                    recFile.setValue({
+                        fieldId: 'custrecord_msi_web_url',
+                        value: files[i].fileUrl
+                    });
+
+                    recFile.setValue({
+                        fieldId: 'custrecord_msi_createdby_api_file',
+                        value: context.custbody_msi_createdby_api
+                    });
+
+                    const idFile = recFile.save();
+                    resultfileid.push({
+                        success: true,
+                        idFile: idFile,
+                        index: i
+                    });
+                }
+            }
+
             const savedRecord = record.load({
                 type: record.Type.ESTIMATE,
                 id: estimateId,
@@ -244,7 +322,8 @@ define(['N/record', 'N/format', 'N/log'], (record, format, log) => {
                 status: 'success',
                 id: estimateId,
                 tranid: savedRecord.getValue('tranid'),
-                message: 'Quotation ' + (isUpdate ? 'updated' : 'created') + ' successfully'
+                message: 'Quotation ' + (isUpdate ? 'updated' : 'created') + ' successfully',
+                resultfile: resultfileid
             };
 
         } catch (e) {
