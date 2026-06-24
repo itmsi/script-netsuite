@@ -318,10 +318,74 @@ define(['N/record', 'N/format', 'N/log', 'N/search'], (record, format, log, sear
                 isDynamic: false
             });
 
+            let currentTranid = savedRecord.getValue('tranid');
+
+            // --- MANUAL AUTONUMBERING OVERRIDE ---
+            // Jika tranid yang di-generate NetSuite hanya berisi angka (misal "38")
+            if (!isUpdate && /^\d+$/.test(currentTranid)) {
+                try {
+                    // 1. Dapatkan Tahun dari trandate
+                    let year = new Date().getFullYear().toString();
+                    if (context.trandate) {
+                        const parts = context.trandate.split('/');
+                        if (parts.length >= 3) {
+                            year = parts[2].split(' ')[0]; // Mengambil tahun saja (Abaikan jam jika ada)
+                        }
+                    }
+
+                    // 2. Dapatkan Kode Subsidiary (Default 'IEL')
+                    let subCode = 'IEL';
+                    if (context.subsidiary) {
+                        const subMap = {
+                            // Anda bisa menambahkan mapping manual ID -> Kode di sini
+                            // '5': 'IEC', 
+                            // '6': 'IEL'
+                        };
+
+                        if (subMap[String(context.subsidiary)]) {
+                            subCode = subMap[String(context.subsidiary)];
+                        } else {
+                            // Coba cari dari field nama/prefix subsidiary NetSuite
+                            const subLook = search.lookupFields({
+                                type: search.Type.SUBSIDIARY,
+                                id: context.subsidiary,
+                                columns: ['tranprefix', 'name']
+                            });
+                            if (subLook.tranprefix) {
+                                subCode = subLook.tranprefix;
+                            } else if (subLook.name) {
+                                // Extract 3 huruf kapital berjejer pertama jika ada (misal "BOC - IEL")
+                                const match = subLook.name.match(/([A-Z]{3})/);
+                                if (match) subCode = match[1];
+                            }
+                        }
+                    }
+
+                    // Bersihkan subCode dari karakter khusus seperti "-" (misal "IEC-" menjadi "IEC")
+                    subCode = subCode.replace(/[^A-Za-z0-9]/g, '');
+
+                    // 3. Rangkai format: YYYY/SUB/QUO/000000
+                    const sequence = currentTranid.padStart(6, '0');
+                    currentTranid = `${year}/${subCode}/QUO/${sequence}`;
+
+                    // Update record dengan tranid yang baru (override)
+                    record.submitFields({
+                        type: record.Type.ESTIMATE,
+                        id: estimateId,
+                        values: { tranid: currentTranid },
+                        options: { enableSourcing: false, ignoreMandatoryFields: true }
+                    });
+
+                } catch (err) {
+                    log.error('Error formatting custom tranid', err);
+                    // Lanjutkan dengan tranid mentah jika proses format gagal
+                }
+            }
+
             return {
                 status: 'success',
                 id: estimateId,
-                tranid: savedRecord.getValue('tranid'),
+                tranid: currentTranid,
                 message: 'Quotation ' + (isUpdate ? 'updated' : 'created') + ' successfully',
                 resultfile: resultfileid
             };
