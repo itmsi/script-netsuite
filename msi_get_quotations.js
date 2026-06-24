@@ -107,7 +107,7 @@ define(['N/search'], (search) => {
 
             // ── Build columns (attach sort to the right column) ───────────────
             const columnDefs = [
-                'tranid', 'entity', 'status', 'trandate', 'title',
+                'tranid', 'entity', 'status', 'trandate', 'title', 'customform',
                 'memo', 'lastmodifieddate', 'datecreated',
                 'otherrefnum', 'department', 'class', 'location', 
                 'subsidiarynohierarchy', 'currency',
@@ -168,6 +168,8 @@ define(['N/search'], (search) => {
                 id            : String(r.id),
                 tranid        : r.getValue('tranid'),
                 tran_date     : r.getValue('trandate'),
+                customform                  : r.getValue('customform'),
+                customform_name             : r.getText('customform'),
                 title         : r.getValue('title'),
                 duedate                      : r.getValue('duedate'),
                 entitystatus                 : r.getValue('entitystatus'),
