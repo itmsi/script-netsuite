@@ -375,7 +375,7 @@ define(['N/search', 'N/log'], (search, log) => {
                         packed: result.getValue('quantitypacked') || 0,
                         fulfilled: shipped, // using quantityshiprecv as fulfilled
                         invoiced: result.getValue('quantitybilled') || 0,
-                        backordered: backordered,
+                        backorder: backordered,
                         available: null, // will be populated by inventory lookup
                         on_hand: null, // will be populated by inventory lookup
                         tier_price: result.getValue('custcol_me_tier_price') || null,
