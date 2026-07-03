@@ -69,6 +69,13 @@ define(['N/record', 'N/log'], function (record, log) {
                 });
 
                 if (qtyRemaining <= 0) {
+                    // FIX Bug 1: explicitly deselect — transform sets itemreceive=true by default
+                    fulfillment.setCurrentSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'itemreceive',
+                        value: false
+                    });
+                    fulfillment.commitLine({ sublistId: 'item' });
                     continue;
                 }
 
@@ -89,7 +96,14 @@ define(['N/record', 'N/log'], function (record, log) {
                 }
 
                 // kalau tidak ada di payload → skip
+                // FIX Bug 1: explicitly deselect — transform sets itemreceive=true by default
                 if (!matchedItem) {
+                    fulfillment.setCurrentSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'itemreceive',
+                        value: false
+                    });
+                    fulfillment.commitLine({ sublistId: 'item' });
                     continue;
                 }
 
@@ -107,12 +121,26 @@ define(['N/record', 'N/log'], function (record, log) {
                 var serials = matchedItem.serials || [];
                 var payloadQty = matchedItem.quantity;
 
-                var qtyToFulfill = 1;
+                var qtyToFulfill;
 
                 if (serials && serials.length > 0) {
+                    // Pakai serial → qty = jumlah serial (1 serial = 1 unit)
                     qtyToFulfill = serials.length;
-                } else if (payloadQty && payloadQty > 0) {
+                } else if (payloadQty === 0) {
+                    // Explicitly 0 → skip line ini
+                    fulfillment.setCurrentSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'itemreceive',
+                        value: false
+                    });
+                    fulfillment.commitLine({ sublistId: 'item' });
+                    continue;
+                } else if (payloadQty !== null && payloadQty !== undefined && payloadQty > 0) {
+                    // Qty di-set explicit → pakai qty dari payload
                     qtyToFulfill = payloadQty;
+                } else {
+                    // quantity tidak dikirim (undefined) → default fulfill semua sisa
+                    qtyToFulfill = qtyRemaining;
                 }
 
                 // jangan lebih dari remaining
