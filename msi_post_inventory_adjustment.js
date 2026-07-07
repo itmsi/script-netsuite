@@ -64,7 +64,7 @@ define(['N/record', 'N/format'], (record, format) => {
 
             // ── Buat record Inventory Adjustment ─────────────────────────────
             let invAdj = record.create({
-                type:      record.Type.INVENTORY_ADJUSTMENT,
+                type: record.Type.INVENTORY_ADJUSTMENT,
                 isDynamic: true
             });
 
@@ -73,11 +73,11 @@ define(['N/record', 'N/format'], (record, format) => {
             if (body.customform) {
                 invAdj.setValue({ fieldId: 'customform', value: body.customform });
             }
-            invAdj.setValue({ fieldId: 'subsidiary',   value: body.subsidiary });
-            invAdj.setValue({ fieldId: 'account',      value: body.account });
-            invAdj.setValue({ fieldId: 'adjlocation',  value: body.adjlocation });
-            invAdj.setValue({ fieldId: 'department',   value: body.department });
-            invAdj.setValue({ fieldId: 'class',        value: body.class });
+            invAdj.setValue({ fieldId: 'subsidiary', value: body.subsidiary });
+            invAdj.setValue({ fieldId: 'account', value: body.account });
+            invAdj.setValue({ fieldId: 'adjlocation', value: body.adjlocation });
+            invAdj.setValue({ fieldId: 'department', value: body.department });
+            invAdj.setValue({ fieldId: 'class', value: body.class });
 
             if (body.trandate) {
                 // Parse ISO date string "YYYY-MM-DD" langsung ke JS Date
@@ -140,22 +140,32 @@ define(['N/record', 'N/format'], (record, format) => {
 
                 invAdj.setCurrentSublistValue({
                     sublistId: 'inventory',
-                    fieldId:   'item',
-                    value:     lineData.item
+                    fieldId: 'item',
+                    value: lineData.item
                 });
 
                 invAdj.setCurrentSublistValue({
                     sublistId: 'inventory',
-                    fieldId:   'location',
-                    value:     lineData.location
+                    fieldId: 'location',
+                    value: lineData.location
                 });
 
                 // Set quantity adjustment
                 if (lineData.quantity !== undefined && lineData.quantity !== null) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'adjustqtyby',
-                        value:     lineData.quantity
+                        fieldId: 'adjustqtyby',
+                        value: 0
+                    });
+
+                    log.debug("qtyLine",lineData.quantity );
+                    const numQty = parseInt(lineData.quantity, 10); 
+                  log.debug("qtyLineInt",numQty );
+                    // Set juga ke custom kolom Proposed Qty
+                    invAdj.setCurrentSublistValue({
+                        sublistId: 'inventory',
+                        fieldId: 'custcol_me_proposed_qty',
+                        value: lineData.quantity
                     });
                 }
 
@@ -163,8 +173,8 @@ define(['N/record', 'N/format'], (record, format) => {
                 if (lineData.unit_cost !== undefined) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'unitcost',
-                        value:     lineData.unit_cost
+                        fieldId: 'unitcost',
+                        value: lineData.unit_cost
                     });
                 }
 
@@ -172,24 +182,24 @@ define(['N/record', 'N/format'], (record, format) => {
                 if (lineData.department !== undefined) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'department',
-                        value:     lineData.department
+                        fieldId: 'department',
+                        value: lineData.department
                     });
                 }
 
                 // Class per baris — WAJIB diisi, fallback ke header class
                 invAdj.setCurrentSublistValue({
                     sublistId: 'inventory',
-                    fieldId:   'class',
-                    value:     lineData.class !== undefined ? lineData.class : body.class
+                    fieldId: 'class',
+                    value: lineData.class !== undefined ? lineData.class : body.class
                 });
 
                 // Custom kolom: ME \ Description
                 if (lineData.me_description !== undefined) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'custcol_me_description',
-                        value:     lineData.me_description
+                        fieldId: 'custcol_me_description',
+                        value: lineData.me_description
                     });
                 }
 
@@ -197,8 +207,8 @@ define(['N/record', 'N/format'], (record, format) => {
                 if (lineData.custcol_me_purchase_number_line !== undefined) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'custcol_me_purchase_number_line',
-                        value:     lineData.custcol_me_purchase_number_line
+                        fieldId: 'custcol_me_purchase_number_line',
+                        value: lineData.custcol_me_purchase_number_line
                     });
                 }
 
@@ -206,8 +216,8 @@ define(['N/record', 'N/format'], (record, format) => {
                 if (lineData.memo !== undefined) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'memo',
-                        value:     lineData.memo
+                        fieldId: 'memo',
+                        value: lineData.memo
                     });
                 }
 
@@ -217,15 +227,15 @@ define(['N/record', 'N/format'], (record, format) => {
                     // Override qty sesuai jumlah serial
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId:   'adjustqtyby',
-                        value:     lineData.serials.length
+                        fieldId: 'adjustqtyby',
+                        value: lineData.serials.length
                     });
 
-                    // Coba set inventorydetail — hanya berhasil kalau item support serialized/lot tracking
+                    //Coba set inventorydetail — hanya berhasil kalau item support serialized/lot tracking
                     try {
                         let inventoryDetail = invAdj.getCurrentSublistSubrecord({
                             sublistId: 'inventory',
-                            fieldId:   'inventorydetail'
+                            fieldId: 'inventorydetail'
                         });
 
                         // Hapus baris lama jika ada
@@ -240,14 +250,14 @@ define(['N/record', 'N/format'], (record, format) => {
 
                             inventoryDetail.setCurrentSublistValue({
                                 sublistId: 'inventoryassignment',
-                                fieldId:   'receiptinventorynumber',
-                                value:     sn
+                                fieldId: 'receiptinventorynumber',
+                                value: sn
                             });
 
                             inventoryDetail.setCurrentSublistValue({
                                 sublistId: 'inventoryassignment',
-                                fieldId:   'quantity',
-                                value:     1
+                                fieldId: 'quantity',
+                                value: 1
                             });
 
                             inventoryDetail.commitLine({ sublistId: 'inventoryassignment' });
@@ -264,22 +274,22 @@ define(['N/record', 'N/format'], (record, format) => {
 
             // ── Simpan record ─────────────────────────────────────────────────
             let newId = invAdj.save({
-                enableSourcing:        true,
+                enableSourcing: true,
                 ignoreMandatoryFields: false
             });
 
             return {
-                status:                    'success',
-                message:                   'Inventory Adjustment berhasil dibuat',
-                inventory_adjustment_id:   newId
+                status: 'success',
+                message: 'Inventory Adjustment berhasil dibuat',
+                inventory_adjustment_id: newId
             };
 
         } catch (error) {
             return {
-                status:  'error',
-                name:    error.name,
+                status: 'error',
+                name: error.name,
                 message: error.message,
-                stack:   error.stack
+                stack: error.stack
             };
         }
     };
