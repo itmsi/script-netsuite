@@ -1,25 +1,39 @@
 /**
  * @NApiVersion 2.x
  * @NScriptType Restlet
+ *  "sales_order_id": 5157,               // Internal ID Purchase Order
+ *  "transfer_order_id": 1234,   // Internal ID Transfer Order
  */
-define(['N/record', 'N/log'], function (record, log) {
+define(['N/record', 'N/log', 'N/search'], function (record, log, search) {
 
     function post(context) {
 
         try {
 
             var soId = context.sales_order_id;
+            var toId = context.transfer_order_id;
 
-            if (!soId) {
+            // Deteksi tipe order: SO atau TO
+            var sourceId, sourceType, isTransferOrder;
+
+            if (soId) {
+                sourceId = soId;
+                sourceType = record.Type.SALES_ORDER;
+                isTransferOrder = false;
+            } else if (toId) {
+                sourceId = toId;
+                sourceType = record.Type.TRANSFER_ORDER;
+                isTransferOrder = true;
+            } else {
                 return {
                     status: 'error',
-                    message: 'sales_order_id is required'
+                    message: 'sales_order_id atau transfer_order_id harus diisi'
                 };
             }
 
             var fulfillment = record.transform({
-                fromType: record.Type.SALES_ORDER,
-                fromId: soId,
+                fromType: sourceType,
+                fromId: sourceId,
                 toType: record.Type.ITEM_FULFILLMENT,
                 isDynamic: true
             });
@@ -253,13 +267,9 @@ define(['N/record', 'N/log'], function (record, log) {
             }
 
             // Set Status sebelum di save
-            var shipStatusMap = {
-                picked: 'A',
-                packed: 'B',
-                shipped: 'C'
-            };
-            var statusStr = context.ship_status || 'shipped';
-            var statusCode = shipStatusMap[statusStr.toLowerCase()] || 'C';
+            var statusStr = (context.ship_status || context.shipstatus || 'shipped').toLowerCase();
+            var statusCode = statusStr === 'picked' ? 'A' : statusStr === 'packed' ? 'B' : 'C';
+            var statusText = statusStr === 'picked' ? 'Picked' : statusStr === 'packed' ? 'Packed' : 'Shipped';
 
             try {
                 fulfillment.setValue({
@@ -267,11 +277,25 @@ define(['N/record', 'N/log'], function (record, log) {
                     value: statusCode
                 });
             } catch (e) {
-                // fallbacks if standard value fail
-                fulfillment.setText({
-                    fieldId: 'shipstatus',
-                    text: 'Shipped' // try text mapping if value fails
-                });
+                try {
+                    fulfillment.setText({
+                        fieldId: 'shipstatus',
+                        text: statusText
+                    });
+                } catch (e2) {
+                    log.error('SET SHIPSTATUS ERROR', e2.message);
+                }
+            }
+
+            // 🔥 Auto-Approve: set approval status ke 'Approved' sebelum save
+            // Kirim "auto_approve": false di payload jika tidak ingin auto-approve
+            var shouldAutoApprove = context.auto_approve !== false;
+            if (shouldAutoApprove) {
+                try {
+                    fulfillment.setValue({ fieldId: 'approvalstatus', value: 'A' }); // A = Approved
+                } catch (approveErr) {
+                    log.error('SET APPROVAL STATUS ERROR', approveErr.message);
+                }
             }
 
             var fulfillmentId = fulfillment.save({
@@ -279,9 +303,23 @@ define(['N/record', 'N/log'], function (record, log) {
                 ignoreMandatoryFields: true // Bypass UI validation errors for standard fields mapped dynamically
             });
 
+            // Ambil nomor dokumen (tranid) dari Item Fulfillment yang baru dibuat
+            var docId = '';
+            try {
+                var ifFields = search.lookupFields({
+                    type: search.Type.ITEM_FULFILLMENT,
+                    id: fulfillmentId,
+                    columns: ['tranid']
+                });
+                docId = ifFields.tranid || '';
+            } catch (lookupErr) {
+                log.error('LOOKUP TRANID ERROR', lookupErr.message);
+            }
+
             return {
                 status: 'success',
-                fulfillment_id: fulfillmentId
+                fulfillment_id: fulfillmentId,
+                doc_id: docId
             };
 
         } catch (e) {
