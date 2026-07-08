@@ -1,8 +1,9 @@
 /**
  * @NApiVersion 2.x
  * @NScriptType Restlet
- *  "sales_order_id": 5157,               // Internal ID Purchase Order
+ *  "sales_order_id": 5157,               // Internal ID Sales Order
  *  "transfer_order_id": 1234,   // Internal ID Transfer Order
+ *  "vendor_return_id": 5678,    // Internal ID Vendor Return Authorization
  */
 define(['N/record', 'N/log', 'N/search'], function (record, log, search) {
 
@@ -12,8 +13,9 @@ define(['N/record', 'N/log', 'N/search'], function (record, log, search) {
 
             var soId = context.sales_order_id;
             var toId = context.transfer_order_id;
+            var vrId = context.vendor_return_id;
 
-            // Deteksi tipe order: SO atau TO
+            // Deteksi tipe order: SO atau TO atau VR
             var sourceId, sourceType, isTransferOrder;
 
             if (soId) {
@@ -24,10 +26,14 @@ define(['N/record', 'N/log', 'N/search'], function (record, log, search) {
                 sourceId = toId;
                 sourceType = record.Type.TRANSFER_ORDER;
                 isTransferOrder = true;
+            } else if (vrId) {
+                sourceId = vrId;
+                sourceType = record.Type.VENDOR_RETURN_AUTHORIZATION;
+                isTransferOrder = false;
             } else {
                 return {
                     status: 'error',
-                    message: 'sales_order_id atau transfer_order_id harus diisi'
+                    message: 'sales_order_id, transfer_order_id, atau vendor_return_id harus diisi'
                 };
             }
 

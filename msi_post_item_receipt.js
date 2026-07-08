@@ -10,6 +10,7 @@
    // Salah satu wajib diisi:
    "po_id": 5157,               // Internal ID Purchase Order
    "transfer_order_id": 1234,   // Internal ID Transfer Order
+   "customer_return_id": 5678, // Internal ID Customer Return (Return Authorization)
 
    // Header (opsional):
    "trandate": "2026-03-11",    // format: YYYY-MM-DD atau DD-MM-YYYY
@@ -47,6 +48,7 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
 
         // 1. Deteksi tipe sumber
         var sourceId, sourceType, isTransferOrder;
+        var isReturnAuth = false;
 
         if (params.po_id) {
             sourceId = params.po_id;
@@ -56,8 +58,13 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
             sourceId = params.transfer_order_id;
             sourceType = record.Type.TRANSFER_ORDER;
             isTransferOrder = true;
+        } else if (params.customer_return_id) {
+            sourceId = params.customer_return_id;
+            sourceType = record.Type.RETURN_AUTHORIZATION;
+            isTransferOrder = false;
+            isReturnAuth = true;
         } else {
-            throw new Error("'po_id' atau 'transfer_order_id' wajib diisi");
+            throw new Error("Salah satu dari 'po_id', 'transfer_order_id', atau 'customer_return_id' wajib diisi");
         }
 
         // 2. Transform ke Item Receipt
@@ -203,7 +210,7 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
                 }
             });
 
-            if (!isTransferOrder && itemData.rate !== undefined && itemData.rate !== null) {
+            if (!isTransferOrder && !isReturnAuth && itemData.rate !== undefined && itemData.rate !== null) {
                 itemReceipt.setCurrentSublistValue({
                     sublistId: 'item', fieldId: 'unitcost', value: itemData.rate
                 });
@@ -294,9 +301,12 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
                 columns: ['tranid', 'trandate']
             });
 
-            var sourceRecordType = isTransferOrder
-                ? search.Type.TRANSFER_ORDER
-                : search.Type.PURCHASE_ORDER;
+            var sourceRecordType = search.Type.PURCHASE_ORDER;
+            if (isTransferOrder) {
+                sourceRecordType = search.Type.TRANSFER_ORDER;
+            } else if (isReturnAuth) {
+                sourceRecordType = search.Type.RETURN_AUTHORIZATION;
+            }
 
             var sourceFields = search.lookupFields({
                 type: sourceRecordType,
@@ -308,14 +318,25 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
                 ? (sourceFields.tranid.length > 0 ? sourceFields.tranid[0].text : '')
                 : (sourceFields.tranid || '');
 
-            var sourceKey = isTransferOrder ? 'to_id' : 'po_id';
-            var sourceNumKey = isTransferOrder ? 'to_number' : 'po_number';
+            var sourceKey = 'po_id';
+            var sourceNumKey = 'po_number';
+            var sourceTypeName = 'purchase_order';
+
+            if (isTransferOrder) {
+                sourceKey = 'to_id';
+                sourceNumKey = 'to_number';
+                sourceTypeName = 'transfer_order';
+            } else if (isReturnAuth) {
+                sourceKey = 'customer_return_id';
+                sourceNumKey = 'customer_return_number';
+                sourceTypeName = 'customer_return';
+            }
 
             var lineObj = {
                 id: irId,
                 tranid: irFields.tranid || '',
                 trandate: irFields.trandate || '',
-                source_type: isTransferOrder ? 'transfer_order' : 'purchase_order'
+                source_type: sourceTypeName
             };
             lineObj[sourceKey] = sourceId;
             lineObj[sourceNumKey] = sourceTranId;
@@ -325,7 +346,9 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
         } catch (e) {
             log.error('ERROR fetch IR info', e.message);
             // Tetap kembalikan irId meskipun lookupFields gagal
-            responseData.push({ id: irId, po_id: sourceId });
+            var fallbackObj = { id: irId };
+            fallbackObj[isTransferOrder ? 'to_id' : (isReturnAuth ? 'customer_return_id' : 'po_id')] = sourceId;
+            responseData.push(fallbackObj);
         }
 
         return responseData;
@@ -337,8 +360,8 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
     function post(params) {
         try {
             var result = receiveItems(params);
-            var topKey = params.transfer_order_id ? 'transfer_order_id' : 'purchase_order_id';
-            var topVal = params.po_id || params.transfer_order_id;
+            var topKey = params.transfer_order_id ? 'transfer_order_id' : (params.customer_return_id ? 'customer_return_id' : 'purchase_order_id');
+            var topVal = params.po_id || params.transfer_order_id || params.customer_return_id;
             var resp = {
                 success: true,
                 goods_receipts: result
