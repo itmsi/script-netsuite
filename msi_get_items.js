@@ -182,7 +182,8 @@ define(['N/search'], (search) => {
                         "locationquantityonhand",
                         "locationquantityonorder",
                         "locationquantitycommitted",
-                        "locationquantitybackordered"
+                        "locationquantitybackordered",
+                        "locationquantityintransit"
                     ]
                 });
 
@@ -200,6 +201,7 @@ define(['N/search'], (search) => {
                             qtyOnOrder: row.getValue("locationquantityonorder") || "0",
                             qtyCommitted: row.getValue("locationquantitycommitted") || "0",
                             qtyBackOrder: row.getValue("locationquantitybackordered") || "0",
+                            qtyInTransit: row.getValue("locationquantityintransit") || "0",
                             serialNumbers: []
                         };
                         locMap[locId] = locObj;
