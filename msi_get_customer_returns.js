@@ -11,6 +11,8 @@
    "sort_by"    : "trandate",
    "sort_order" : "DESC",
    "filters": {
+     "id": ["12345"],
+     "tranid": "RMA-0001",
      "lastmodified": "2026-03-01T00:00:00"
    }
  }
@@ -103,6 +105,14 @@ define(['N/search'], function (search) {
                 var d = new Date(filters.lastmodified);
                 var nsDate = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
                 searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
+            }
+
+            if (filters.id || filters.internalid) {
+                searchFilters.push('AND', ['internalid', 'anyof', filters.id || filters.internalid]);
+            }
+
+            if (filters.tranid) {
+                searchFilters.push('AND', ['tranid', 'is', filters.tranid]);
             }
 
             // ── Build columns ─────────────────────────────────────────────────
@@ -254,6 +264,16 @@ define(['N/search'], function (search) {
                             };
                         }
 
+                        // Hitung received, committed, backorder
+                        var rawQty = res.getValue('quantity');
+                        var qty = (rawQty !== null && rawQty !== '') ? Math.abs(Number(rawQty)) : 0;
+
+                        var receivedQty = res.getValue('quantityshiprecv');
+                        var received = (receivedQty !== null && receivedQty !== '') ? Math.abs(Number(receivedQty)) : 0;
+
+                        var committed = Math.max(0, qty - received);
+                        var backorder = Math.max(0, qty - committed - received);
+
                         // Jika item baris ini belum di-push ke array (grouping by line)
                         if (!tranObj.map[lineId]) {
                             var newItem = {
@@ -263,7 +283,10 @@ define(['N/search'], function (search) {
                                 item_display    : res.getText('item'),
                                 returned        : res.getValue('quantityshiprecv'),
                                 refunded        : res.getValue('quantitybilled'),
-                                quantity        : Math.abs(res.getValue('quantity')),
+                                quantity        : qty,
+                                committed       : committed,
+                                backorder       : backorder,
+                                received        : received,
                                 units           : res.getValue('unit'),
                                 units_display   : res.getText('unit'),
                                 inventory_details: [],
