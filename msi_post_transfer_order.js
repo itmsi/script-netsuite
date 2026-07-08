@@ -3,6 +3,45 @@
  * @NScriptType Restlet
  *
  * CREATE / UPDATE Transfer Order
+ * 
+ * ==========================================
+ * EXPECTED PAYLOAD STRUCTURE (JSON)
+ * ==========================================
+ {
+    "id": 12345,                           // (Optional) Internal ID for UPDATE. If empty, will CREATE new Transfer Order.
+    "customform": 135,                     // (Optional) Custom form internal ID
+    "subsidiary": 1,                       // (Optional) Subsidiary internal ID
+    "location": 2,                         // (Optional) From Location internal ID (can also use "from_location_id")
+    "transferlocation": 3,                 // (Optional) To Location internal ID (can also use "to_location_id")
+    "trandate": "1/31/2024",               // (Optional) Date string matching NetSuite date format preference
+    "memo": "Transfer order memo",         // (Optional) Memo
+    "department": 4,                       // (Optional) Department internal ID
+    "class": 5,                            // (Optional) Class internal ID
+    "status": "A",                         // (Optional) Order Status
+    "incoterm": 6,                         // (Optional) Incoterm internal ID
+    "employee": 7,                         // (Optional) Employee internal ID
+    "custbody_...": "value",               // (Optional) Any custom body field starting with 'custbody' will be auto-mapped
+    
+    "items": [                             // (Optional) Array of line items
+        {
+            "item": 1001,                  // Item internal ID (can also use "item_id")
+            "quantity": 10,                // Quantity
+            "description": "Item desc",    // (Optional) Line description (can also use "memo")
+            "department": 4,               // (Optional) Line department
+            "class": 5,                    // (Optional) Line class
+            "expectedshipdate": "2/1/2024",// (Optional) Expected Ship Date
+            "expectedreceiptdate": "2/5/2024",// (Optional) Expected Receipt Date
+            "custcol_...": "value"         // (Optional) Any custom column field starting with 'custcol' will be auto-mapped
+        }
+    ],
+    
+    "files": [                             // (Optional) Array of file attachments (URL-based)
+        {
+            "file_name": "document.pdf",
+            "file_url": "https://example.com/document.pdf"
+        }
+    ]
+ }
  */
 define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, search, log) {
 
@@ -10,7 +49,7 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
         var files = context.files;
         try {
             var toRec;
-            
+
             // 1. CREATE or UPDATE
             if (context.id) {
                 toRec = record.load({
@@ -53,11 +92,11 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
             if (context.memo) {
                 toRec.setValue({ fieldId: 'memo', value: context.memo });
             }
-            
+
             if (context.department) {
                 toRec.setValue({ fieldId: 'department', value: context.department });
             }
-            
+
             if (context.class) {
                 toRec.setValue({ fieldId: 'class', value: context.class });
             }
@@ -68,6 +107,10 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
 
             if (context.incoterm) {
                 toRec.setValue({ fieldId: 'incoterm', value: context.incoterm });
+            }
+
+            if (context.employee) {
+                toRec.setValue({ fieldId: 'employee', value: context.employee });
             }
 
             // AUTO-MAP HEADER CUSTBODY_*
@@ -83,7 +126,7 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
 
             // 3. LINES
             if (context.items && context.items.length > 0) {
-                
+
                 // Jika UPDATE, hapus semua line lama (replace all)
                 if (context.id) {
                     var lineCount = toRec.getLineCount({ sublistId: 'item' });
@@ -111,18 +154,18 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
                     if (item.class) {
                         toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'class', value: item.class });
                     }
-                    
+
                     // Dates on line level
                     if (item.expectedshipdate) {
-                        toRec.setCurrentSublistValue({ 
-                            sublistId: 'item', fieldId: 'expectedshipdate', 
-                            value: format.parse({ value: item.expectedshipdate, type: format.Type.DATE }) 
+                        toRec.setCurrentSublistValue({
+                            sublistId: 'item', fieldId: 'expectedshipdate',
+                            value: format.parse({ value: item.expectedshipdate, type: format.Type.DATE })
                         });
                     }
                     if (item.expectedreceiptdate) {
-                        toRec.setCurrentSublistValue({ 
-                            sublistId: 'item', fieldId: 'expectedreceiptdate', 
-                            value: format.parse({ value: item.expectedreceiptdate, type: format.Type.DATE }) 
+                        toRec.setCurrentSublistValue({
+                            sublistId: 'item', fieldId: 'expectedreceiptdate',
+                            value: format.parse({ value: item.expectedreceiptdate, type: format.Type.DATE })
                         });
                     }
 

@@ -259,7 +259,7 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
                 itemReceipt.commitLine({ sublistId: 'item' });
             } catch (commitErr) {
                 if (commitErr.message && commitErr.message.indexOf('You can not receive more') > -1) {
-                    throw new Error("Gagal commit baris: Kuantitas melebihi jumlah yang sudah di-Shipped di Transfer Order.");
+                    throw new Error("Gagal commit baris: Kuantitas melebihi jumlah yang sudah di-Shipped.");
                 }
                 throw commitErr;
             }
@@ -268,7 +268,7 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
         }
 
         if (itemChecked === 0) {
-            throw new Error("Tidak ada item valid untuk di-receive. Pastikan line benar dan TO sudah 'Shipped'.");
+            throw new Error("Tidak ada item valid untuk di-receive. Pastikan sudah 'Shipped'.");
         }
 
         // 6. Save

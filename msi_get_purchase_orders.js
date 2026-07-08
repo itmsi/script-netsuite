@@ -319,6 +319,9 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         rateValue = res.getValue({ name: 'formulanumericrate' });
                         taxValue = res.getValue({ name: 'formulanumeric' });
                     }
+                    const qtyReceived = res.getValue('quantityshiprecv') || 0;
+                    let commitedQty = quantity - qtyReceived;
+                    let backorder = Math.max(0, quantity - commitedQty - qtyReceived);
 
                     let lineRate = quantity > 0 ? Number(rateValue) : Number(lineAmount);
                     let lineTaxAmt = Number(taxValue) || 0;
@@ -334,6 +337,8 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         quantity: quantity,
                         quantitybilled: res.getValue('quantitybilled'),
                         quantityreceived: res.getValue('quantityshiprecv'),
+                        committed: commitedQty,
+                        backordered: backorder,
                         rate: lineRate,
                         netamount: lineAmount,
                         tax1amt: Math.abs(lineTaxAmt),
