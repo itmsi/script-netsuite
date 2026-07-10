@@ -193,7 +193,8 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
                         success  : true,
                         id       : savedId,
                         index    : i,
-                        fileName : fileItem.fileName
+                        fileName : fileItem.fileName,
+                        fileUrl  : fileItem.fileUrl
                     });
 
                 } catch (innerErr) {
