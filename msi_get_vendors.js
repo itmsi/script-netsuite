@@ -122,10 +122,11 @@ define(['N/search'], (search) => {
             "email",
             "phone",
             "subsidiarynohierarchy",
+            "isinactive",
             "lastmodifieddate"
         ].map(col => col === sortBy ? search.createColumn({ name: col, sort: sortOrder }) : col);
 
-        if (!["internalid", "entityid", "companyname", "email", "phone", "subsidiarynohierarchy", "lastmodifieddate"].includes(sortBy)) {
+        if (!["internalid", "entityid", "companyname", "email", "phone", "subsidiarynohierarchy", "isinactive", "lastmodifieddate"].includes(sortBy)) {
              columns.push(search.createColumn({ name: sortBy, sort: sortOrder }));
         }
 
@@ -153,17 +154,20 @@ define(['N/search'], (search) => {
         const searchPage = pagedData.fetch({ index: page - 1 });
 
         // Map result
-        const data = searchPage.data.map(result => ({
-            internalId: result.getValue("internalid"),
-            entityId: result.getValue("entityid"),
-            companyName: result.getValue("companyname"),
-            email: result.getValue("email"),
-            phone: result.getValue("phone"),
-            subsidiary: result.getValue("subsidiarynohierarchy"),
-            subsidiary_display: result.getText("subsidiarynohierarchy"),
-            lastModifiedDate: formatToISO(result.getValue("lastmodifieddate")),
-            lastModifiedDateRaw: result.getValue("lastmodifieddate")
-        }));
+        const data = searchPage.data.map(result => {
+            return {
+                internalId: result.getValue("internalid"),
+                entityId: result.getValue("entityid"),
+                companyName: result.getValue("companyname"),
+                email: result.getValue("email"),
+                phone: result.getValue("phone"),
+                subsidiary: result.getValue("subsidiarynohierarchy"),
+                subsidiary_display: result.getText("subsidiarynohierarchy"),
+                is_inactive: result.getValue("isinactive"),
+                lastModifiedDate: formatToISO(result.getValue("lastmodifieddate")),
+                lastModifiedDateRaw: result.getValue("lastmodifieddate")
+            };
+        });
 
         return {
             success: true,

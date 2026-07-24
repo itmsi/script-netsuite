@@ -126,10 +126,11 @@ define(['N/search'], (search) => {
             "phone",
             "representingsubsidiary",
             "subsidiarynohierarchy",
+            "isinactive",
             "lastmodifieddate"
         ].map(col => col === sortBy ? search.createColumn({ name: col, sort: sortOrder }) : col);
 
-        if (!["internalid", "entityid", "companyname", "email", "phone", "representingsubsidiary", "subsidiarynohierarchy", "lastmodifieddate"].includes(sortBy)) {
+        if (!["internalid", "entityid", "companyname", "email", "phone", "representingsubsidiary", "subsidiarynohierarchy", "isinactive", "lastmodifieddate"].includes(sortBy)) {
              columns.push(search.createColumn({ name: sortBy, sort: sortOrder }));
         }
 
@@ -167,6 +168,7 @@ define(['N/search'], (search) => {
                 representingSubsidiaryName: result.getText("representingsubsidiary"),
                 primarySubsidiary: result.getValue("subsidiarynohierarchy"),
                 primarySubsidiaryName: result.getText("subsidiarynohierarchy"),
+                is_inactive: result.getValue("isinactive"),
                 lastModifiedDate: formatToISO(result.getValue("lastmodifieddate"))
             };
         });
