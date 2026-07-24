@@ -123,10 +123,6 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 'custbody_me_project_location', 'custbody_me_pr_type',
                 'custbody_me_saving_type', 'custbody_me_pr_number', 'intercotransaction', 'terms',
                 'duedate', 'otherrefnum', 'customform', 'class',
-                search.createColumn({
-                            name: "address",
-                            join: "vendor"
-                        }),
                 search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
                 'subsidiarynohierarchy', 'custbody_me_validity_date', 'department', 'datecreated'
             ];
