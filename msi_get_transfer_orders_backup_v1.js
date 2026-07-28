@@ -179,23 +179,62 @@ define(['N/search', 'N/query'], function (search, query) {
             var ids = Object.keys(map);
 
             // ── Line items via Search ─────────────────────────────────────────
-            // - Field native (quantitycommitted, quantitypicked, dll) diambil dari TO langsung.
-            // - quantityreceived TIDAK valid di TO search → diambil dari ItemRcpt terpisah.
             if (ids.length > 0) {
 
-                // Step 1: Query TO line items dengan field native.
-                //
-                // ROOT CAUSE:
-                //   - NetSuite membuat 3 sub-rows per UI line di Transfer Order:
-                //       [A] "phantom" source row → committed=0 (internal tracking)
-                //       [B] "real" source row    → menyimpan Fulfilled Qty (quantityshiprecv)
-                //       [C] "real" dest row      → menyimpan Received Qty (quantityshiprecv)
-                //
-                // FIX:
-                //   1. Ambil semua baris, group by (toId + itemId)
-                //   2. Pisahkan source rows (from_location) dan dest rows (to_location)
-                //   3. Pasangkan (zip) "real" source rows dengan dest rows
-                //   4. Ambil Received Qty dari dest row!
+                // Step 1: Build status map dari Item Fulfillment & Item Receipt records
+                var statusMap = {};
+                search.create({
+                    type: search.Type.TRANSACTION,
+                    filters: [
+                        ['createdfrom', 'anyof', ids],
+                        'AND', ['mainline', 'is', 'F'],
+                        'AND', ['taxline', 'is', 'F'],
+                        'AND', ['item.type', 'noneof', '@NONE@'],
+                        'AND', ['type', 'anyof', ['ItemShip', 'ItemRcpt']]
+                    ],
+                    columns: [
+                        search.createColumn({ name: 'createdfrom', summary: search.Summary.GROUP }),
+                        search.createColumn({ name: 'internalid', summary: search.Summary.GROUP }),
+                        search.createColumn({ name: 'item', summary: search.Summary.GROUP }),
+                        search.createColumn({ name: 'type', summary: search.Summary.GROUP }),
+                        search.createColumn({ name: 'statusref', summary: search.Summary.GROUP }),
+                        search.createColumn({ name: 'quantity', summary: search.Summary.MAX })
+                    ]
+                }).run().each(function (r) {
+                    var toId = String(r.getValue({ name: 'createdfrom', summary: search.Summary.GROUP }));
+                    var itemId = String(r.getValue({ name: 'item', summary: search.Summary.GROUP }));
+                    var type = String(r.getValue({ name: 'type', summary: search.Summary.GROUP })).toLowerCase();
+                    var status = String(r.getValue({ name: 'statusref', summary: search.Summary.GROUP })).toLowerCase();
+                    var maxQty = Number(r.getValue({ name: 'quantity', summary: search.Summary.MAX })) || 0;
+
+                    var qty = Math.abs(maxQty);
+                    var key = toId + '_' + itemId;
+
+                    if (!statusMap[key]) {
+                        statusMap[key] = { picked: 0, packed: 0, fulfilled: 0, received: 0 };
+                    }
+
+                    if (type.indexOf('itemrcpt') > -1 || type.indexOf('receipt') > -1) {
+                        statusMap[key].received += qty;
+                    } else if (type.indexOf('itemship') > -1 || type.indexOf('fulfill') > -1) {
+                        // Di NetSuite, status ini bersifat kumulatif.
+                        // Jika sudah Packed (B), berarti sudah di-Picked juga.
+                        // Jika sudah Shipped (C), berarti sudah di-Picked dan di-Packed.
+                        if (status.indexOf('a') > -1 || status.indexOf('pick') > -1) {
+                            statusMap[key].picked += qty;
+                        } else if (status.indexOf('b') > -1 || status.indexOf('pack') > -1) {
+                            statusMap[key].picked += qty;
+                            statusMap[key].packed += qty;
+                        } else if (status.indexOf('c') > -1 || status.indexOf('ship') > -1) {
+                            statusMap[key].picked += qty;
+                            statusMap[key].packed += qty;
+                            statusMap[key].fulfilled += qty;
+                        }
+                    }
+                    return true;
+                });
+
+                // Step 2: Query TO line items
                 var lineSearch = search.create({
                     type: search.Type.TRANSFER_ORDER,
                     filters: [
@@ -206,20 +245,14 @@ define(['N/search', 'N/query'], function (search, query) {
                     ],
                     columns: [
                         search.createColumn({ name: 'internalid' }),
-                        search.createColumn({ name: 'line' }),          // line sequence (untuk sort & group)
                         search.createColumn({ name: 'item' }),
                         search.createColumn({ name: 'memo' }),
                         search.createColumn({ name: 'quantity' }),
-                        search.createColumn({ name: 'quantitycommitted' }),
-                        search.createColumn({ name: 'quantitypicked' }),
-                        search.createColumn({ name: 'quantitypacked' }),
-                        search.createColumn({ name: 'quantityshiprecv' }), // Fulfilled (source) atau Received (dest)
                         search.createColumn({ name: 'location' })
                     ]
                 });
 
-                // key: toId + '_' + itemId → array of all rows for this item
-                var lineGroups = {};
+                var seenItems = {};
 
                 lineSearch.run().each(function (r) {
                     var toId = String(r.id);
@@ -228,100 +261,43 @@ define(['N/search', 'N/query'], function (search, query) {
                     var itemId = r.getValue('item');
                     if (!itemId) return true;
 
-                    var locId  = r.getValue('location');
-                    var locNum = locId ? Number(locId) : null;
-                    var lineSeq = Number(r.getValue('line')) || 0;
+                    var rawQty = r.getValue('quantity');
+                    var qty = (rawQty !== null && rawQty !== '') ? Math.abs(Number(rawQty)) : 0;
 
-                    var parseQty = function (val) {
-                        return (val !== null && val !== '') ? Math.abs(Number(val)) : 0;
-                    };
+                    var sm = statusMap[toId + '_' + String(itemId)] || { picked: 0, packed: 0, fulfilled: 0, received: 0 };
 
-                    var qty       = parseQty(r.getValue('quantity'));
-                    var committed = parseQty(r.getValue('quantitycommitted'));
-                    var picked    = parseQty(r.getValue('quantitypicked'));
-                    var packed    = parseQty(r.getValue('quantitypacked'));
-                    var shiprecv  = parseQty(r.getValue('quantityshiprecv'));
-                    var backorder = Math.max(0, qty - committed - picked);
+                    // qty_shipped biasanya merujuk pada jumlah yang sudah benar-benar Fulfilled/Shipped
+                    var qtyShipped = sm.fulfilled;
+                    // Yang committed adalah sisa barang yang belum masuk proses picking sama sekali
+                    var qtyCommitted = Math.max(0, qty - sm.picked);
+                    var backorder = Math.max(0, qty - qtyCommitted - sm.picked);
 
-                    var grpKey = toId + '_' + String(itemId);
-                    if (!lineGroups[grpKey]) lineGroups[grpKey] = [];
-                    lineGroups[grpKey].push({
-                        _toId:              toId,
-                        _seq:               lineSeq,
-                        _locNum:            locNum,
-                        item_id:            Number(itemId),
-                        item_name:          r.getText('item'),
-                        description:        r.getValue('memo') || null,
-                        quantity:           qty,
-                        committed:          committed,
-                        shipped:            shiprecv, // sbg temporary, nanti direname jika ini dest row
-                        picked:             picked,
-                        packed:             packed,
-                        fulfilled:          shiprecv,
-                        received:           0,        // akan di-isi dari dest row
-                        backorder:          backorder,
-                        from_location_id:   map[toId].from_location_id,
-                        from_location_name: map[toId].from_location_name
-                    });
+                    var locId = r.getValue('location');
+                    var locName = r.getText('location');
+
+                    var dedupeKey = toId + '_' + itemId + '_' + qty;
+                    if (!seenItems[dedupeKey]) {
+                        seenItems[dedupeKey] = true;
+                        var currentLines = map[toId].items.length;
+                        map[toId].items.push({
+                            line_number: currentLines + 1,
+                            item_id: Number(itemId),
+                            item_name: r.getText('item'),
+                            description: r.getValue('memo') || null,
+                            quantity: qty,
+                            committed: qtyCommitted,
+                            shipped: qtyShipped,
+                            picked: sm.picked,
+                            packed: sm.packed,
+                            fulfilled: sm.fulfilled,
+                            received: sm.received,
+                            backorder: backorder,
+                            from_location_id: locId ? Number(locId) : null,
+                            from_location_name: locName || null
+                        });
+                    }
 
                     return true;
-                });
-
-                var realLines = [];
-                Object.keys(lineGroups).forEach(function (grpKey) {
-                    // Sort by sequence agar terurut (Phantom -> Real Source -> Real Dest)
-                    var rows = lineGroups[grpKey].sort(function (a, b) { return a._seq - b._seq; });
-                    var toId = grpKey.split('_')[0];
-                    var fromLoc = map[toId].from_location_id;
-                    
-                    var srcRows  = rows.filter(function (r) { return r._locNum === fromLoc; });
-                    var destRows = rows.filter(function (r) { return r._locNum !== fromLoc; });
-                    
-                    var realSrcRows = [];
-                    if (destRows.length > 0 && srcRows.length % destRows.length === 0) {
-                        var multiplier = srcRows.length / destRows.length; // biasanya 2
-                        for (var i = 0; i < destRows.length; i++) {
-                            // Ambil baris source terakhir dari tiap chunk (itu adalah "real" source line)
-                            realSrcRows.push(srcRows[i * multiplier + (multiplier - 1)]);
-                        }
-                    } else {
-                        // Fallback jika tidak ada phantom lines, atau tidak imbang
-                        var takeCount = destRows.length > 0 ? destRows.length : srcRows.length;
-                        realSrcRows = srcRows.slice(-takeCount); 
-                    }
-                    
-                    for (var j = 0; j < realSrcRows.length; j++) {
-                        var lineObj = realSrcRows[j];
-                        if (destRows[j]) {
-                            // field quantityshiprecv pada destination row adalah Received Qty!
-                            lineObj.received = destRows[j].shipped; 
-                        }
-                        realLines.push(lineObj);
-                    }
-                });
-
-                // Sort semua real lines by sequence untuk mempertahankan urutan UI
-                realLines.sort(function (a, b) { return a._seq - b._seq; });
-
-                realLines.forEach(function (e) {
-                    var toId = e._toId;
-                    var n    = map[toId].items.length;
-                    map[toId].items.push({
-                        line_number:        n + 1,
-                        item_id:            e.item_id,
-                        item_name:          e.item_name,
-                        description:        e.description,
-                        quantity:           e.quantity,
-                        committed:          e.committed,
-                        shipped:            e.shipped,
-                        picked:             e.picked,
-                        packed:             e.packed,
-                        fulfilled:          e.fulfilled,
-                        received:           e.received,
-                        backorder:          e.backorder,
-                        from_location_id:   e.from_location_id,
-                        from_location_name: e.from_location_name
-                    });
                 });
             }
 
