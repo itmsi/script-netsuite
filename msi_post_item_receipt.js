@@ -39,7 +39,7 @@
 
  * Kalau "items" tidak dikirim -> semua baris di-receive dengan qty sisa default.
  */
-define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
+define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search, log, runtime) {
 
     // =========================================================
     // CORE: Buat Item Receipt dari PO atau TO
@@ -64,7 +64,7 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
             isTransferOrder = false;
             isReturnAuth = true;
         } else {
-            throw new Error("Salah satu dari 'po_id', 'transfer_order_id', atau 'customer_return_id' wajib diisi");
+            throw new Error("'po_id', 'transfer_order_id', atau 'customer_return_id' wajib diisi");
         }
 
         // 2. Transform ke Item Receipt
@@ -284,13 +284,47 @@ define(['N/record', 'N/search', 'N/log'], function (record, search, log) {
             irId = itemReceipt.save({
                 enableSourcing: true,
                 ignoreMandatoryFields: true
-            });
+            });  
         } catch (saveErr) {
             if (saveErr.message && saveErr.message.indexOf('You can not receive more') > -1) {
                 throw new Error("Gagal Save: Tidak bisa menerima barang dari Transfer Order. Kemungkinan penyebab: (1) Item Fulfillment terkait belum di-Approve (cek Approval Status di IF), (2) Kuantitas melebihi jumlah yang di-Shipped, atau (3) Barang sudah pernah di-receive sebelumnya. Detail: " + saveErr.message);
             }
             throw saveErr;
         }
+
+            // 28 Juli 2026 Dharma Create Add note after save success
+            // ==============================
+            // CREATE NOTE (FIRST)
+            // ==============================
+            if (params.note && params.note.trim() !== "") {
+
+                var noteRec = record.create({
+                    type: 'note',
+                    isDynamic: true
+                });
+
+                noteRec.setValue({
+                    fieldId: 'title',
+                    value: params.noteTitle || 'API Note'
+                });
+
+                noteRec.setValue({
+                    fieldId: 'note',
+                    value: params.note
+                });
+
+                noteRec.setValue({
+                    fieldId: 'transaction',
+                    value: irId 
+                });
+
+                noteRec.setValue({
+                    fieldId: 'author',
+                    value: runtime.getCurrentUser().id
+                });
+
+                noteId = noteRec.save();
+            }
 
         // 7. Build response
         var responseData = [];

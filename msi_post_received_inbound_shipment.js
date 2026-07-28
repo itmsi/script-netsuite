@@ -2,7 +2,7 @@
  *@NApiVersion 2.1
  *@NScriptType Restlet
  */
-define(['N/record', 'N/search'], function (record, search) {
+define(['N/record', 'N/search', 'N/runtime'], function (record, search, runtime) {
 
     function receiptInbound(params) {
 
@@ -364,6 +364,7 @@ define(['N/record', 'N/search'], function (record, search) {
                     po_id: result.getValue({ name: 'createdfrom' }),
                     po_number: result.getText({ name: 'createdfrom' })
                 });
+
                 return true;
             });
 
@@ -397,6 +398,7 @@ define(['N/record', 'N/search'], function (record, search) {
                         item_id: result.getValue({ name: 'item' }),
                         item_name: result.getText({ name: 'item' })
                     });
+       
                     return true;
                 });
 
@@ -428,11 +430,55 @@ define(['N/record', 'N/search'], function (record, search) {
                 isProcess = 'success'
             }
         } else if (isCheck === 1) {
-            if (grList.length > 0) {
+            if (grList.length == payloadPoIds.length) {
                 isProcess = 'success'
+
+                for (var h = 0; h < irHeaders.length; h++) {
+                    var header = irHeaders[h];
+                    // 28 Juli 2026 Dharma Create Add note after save success
+            // ==============================
+            // CREATE NOTE (FIRST)
+            // ==============================
+            if (params.note && params.note.trim() !== "") {
+
+                var noteRec = record.create({
+                    type: 'note',
+                    isDynamic: true
+                });
+
+                noteRec.setValue({
+                    fieldId: 'title',
+                    value: params.noteTitle || 'API Note'
+                });
+
+                noteRec.setValue({
+                    fieldId: 'note',
+                    value: params.note
+                });
+
+                noteRec.setValue({
+                    fieldId: 'transaction',
+                    value: header.id 
+                });
+
+                noteRec.setValue({
+                    fieldId: 'author',
+                    value: runtime.getCurrentUser().id
+                });
+
+                noteId = noteRec.save();
+            }
+                }
+
+              
             } else {
                 isProcess = 'process'
             }
+            // if (grList.length > 0) {
+            //     isProcess = 'success'
+            // } else {
+            //     isProcess = 'process'
+            // }
         }
 
         return {
