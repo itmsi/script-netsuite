@@ -1,5 +1,5 @@
 /**
- * @NApiVersion 2.x
+ * @NApiVersion 2.1
  * @NScriptType Restlet
  */
 define(['N/record','N/format','N/search'], function (record, format, search) {

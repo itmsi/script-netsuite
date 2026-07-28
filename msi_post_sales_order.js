@@ -1,5 +1,5 @@
 /**
- * @NApiVersion 2.x
+ * @NApiVersion 2.1
  * @NScriptType Restlet
  *
  * RESTlet script untuk membuat (Create) atau mengupdate (Update) Sales Order.

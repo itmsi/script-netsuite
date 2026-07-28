@@ -91,28 +91,39 @@ define(['N/search'], (search) => {
         let filtersBody = requestBody.filters || {};
         let lastModified = isoToNetSuiteDate(filtersBody.lastmodified) || null;
 
-       // Base filter: active vendors only
-        let filters = [["isinactive", "is", "F"]];
+       // Filter is_inactive: true → inactive saja, false → aktif saja, tidak dikirim → semua
+        let filters = [];
+        if (filtersBody.is_inactive === true || filtersBody.is_inactive === 'true') {
+            filters.push(["isinactive", "is", "T"]);
+        } else if (filtersBody.is_inactive === false || filtersBody.is_inactive === 'false') {
+            filters.push(["isinactive", "is", "F"]);
+        }
 
         // Add last modified filter
         if (lastModified) {
-            filters.push("AND", ["lastmodifieddate", "onorafter", lastModified]);
+            if (filters.length > 0) filters.push("AND");
+            filters.push(["lastmodifieddate", "onorafter", lastModified]);
         }
 
         if (filtersBody.internalid) {
-            filters.push("AND", ["internalid", "anyof", filtersBody.internalid]);
+            if (filters.length > 0) filters.push("AND");
+            filters.push(["internalid", "anyof", filtersBody.internalid]);
         }
         if (filtersBody.entityid) {
-            filters.push("AND", ["entityid", "is", filtersBody.entityid]);
+            if (filters.length > 0) filters.push("AND");
+            filters.push(["entityid", "is", filtersBody.entityid]);
         }
         if (filtersBody.companyname) {
-            filters.push("AND", ["companyname", "contains", filtersBody.companyname]);
+            if (filters.length > 0) filters.push("AND");
+            filters.push(["companyname", "contains", filtersBody.companyname]);
         }
         if (filtersBody.email) {
-            filters.push("AND", ["email", "is", filtersBody.email]);
+            if (filters.length > 0) filters.push("AND");
+            filters.push(["email", "is", filtersBody.email]);
         }
         if (filtersBody.phone) {
-            filters.push("AND", ["phone", "is", filtersBody.phone]);
+            if (filters.length > 0) filters.push("AND");
+            filters.push(["phone", "is", filtersBody.phone]);
         }
 
         let columns = [
@@ -133,7 +144,7 @@ define(['N/search'], (search) => {
         // Vendor search
         const vendorSearch = search.create({
             type: search.Type.VENDOR,
-            filters: filters,
+            filters: filters.length > 0 ? filters : undefined,
             columns: columns
         });
 
