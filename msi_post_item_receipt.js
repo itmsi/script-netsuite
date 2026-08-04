@@ -121,14 +121,16 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search,
                 var hasLine = pItem.line !== undefined && pItem.line !== null;
                 var hasSeq = pItem.line_sequence !== undefined && pItem.line_sequence !== null;
 
-                if (!hasLine && !hasSeq) {
-                    throw new Error("Item array index " + x + ": 'line' (1-based) wajib diisi");
+                if (!hasLine && !hasSeq && !pItem.line_id) {
+                    throw new Error("Item array index " + x + ": 'line' (1-based) atau 'line_id' wajib diisi");
                 }
 
                 // 'line' adalah 1-based (1, 2, 3, ...)
                 if (hasLine) payloadMap['line_' + parseInt(pItem.line, 10)] = pItem;
                 // Fallback: line_sequence (orderline internal NetSuite) juga masih didukung
                 if (hasSeq) payloadMap['seq_' + pItem.line_sequence] = pItem;
+                // line_id: composite key "toId_lineNumber" dari GET TO response
+                if (pItem.line_id) payloadMap['lid_' + String(pItem.line_id)] = pItem;
             }
         }
 
@@ -162,7 +164,10 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search,
             var lineNum = i + 1; // Konversi loop index 0-based ke 1-based
             var itemData = payloadMap['line_' + lineNum] ||
                 (orderline ? payloadMap['seq_' + String(orderline)] : null) ||
-                (lineSeq ? payloadMap['seq_' + String(lineSeq)] : null);
+                (orderline ? payloadMap['lid_' + String(orderline)] : null) ||
+                (lineSeq ? payloadMap['seq_' + String(lineSeq)] : null) ||
+                (lineSeq ? payloadMap['lid_' + String(lineSeq)] : null) ||
+                (lineSeq && params.transfer_order_id ? payloadMap['lid_' + params.transfer_order_id + '_' + lineSeq] : null);
 
             if (!itemData) {
                 // Tidak ada di payload -> uncheck
@@ -281,10 +286,14 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search,
         // 6. Save
         var irId;
         try {
-            irId = itemReceipt.save({
-                enableSourcing: true,
-                ignoreMandatoryFields: true
-            });  
+            // enableSourcing dimatikan untuk SEMUA tipe (PO, TO, Return Auth).
+            // Untuk TO pun transform sudah membawa location (lokasi tujuan),
+            // quantity, dan cost dari Item Fulfillment — jadi sourcing tidak wajib.
+            // Dengan sourcing off, nilai class/location/department dari payload
+            // (atau hasil transform dari source) menempel apa adanya,
+            // tidak ditimpa sourcing rules (default item record / vendor).
+            var saveOpts = { ignoreMandatoryFields: true };
+            irId = itemReceipt.save(saveOpts);
         } catch (saveErr) {
             if (saveErr.message && saveErr.message.indexOf('You can not receive more') > -1) {
                 throw new Error("Gagal Save: Tidak bisa menerima barang dari Transfer Order. Kemungkinan penyebab: (1) Item Fulfillment terkait belum di-Approve (cek Approval Status di IF), (2) Kuantitas melebihi jumlah yang di-Shipped, atau (3) Barang sudah pernah di-receive sebelumnya. Detail: " + saveErr.message);
