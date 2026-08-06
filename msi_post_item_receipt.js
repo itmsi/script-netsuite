@@ -78,17 +78,21 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search,
         // 3. Set header fields
 
         // trandate: support YYYY-MM-DD dan DD-MM-YYYY
+        // PENTING: jangan pakai new Date(string) untuk string "YYYY-MM-DD" -
+        // itu diparse sebagai UTC midnight, lalu NetSuite convert ke timezone
+        // akun (biasanya mundur dari UTC) sehingga tanggalnya jadi mundur 1 hari.
+        // Makanya parsing manual ke komponen local date (y, m-1, d) diprioritaskan.
         if (params.trandate) {
-            var d = new Date(params.trandate);
-            if (isNaN(d.getTime())) {
-                var parts = params.trandate.split(/[-\/]/);
-                if (parts.length === 3) {
-                    d = parts[0].length === 4
-                        ? new Date(+parts[0], +parts[1] - 1, +parts[2])   // YYYY-MM-DD
-                        : new Date(+parts[2], +parts[1] - 1, +parts[0]);  // DD-MM-YYYY
-                }
+            var d;
+            var parts = String(params.trandate).split(/[-\/]/);
+            if (parts.length === 3) {
+                d = parts[0].length === 4
+                    ? new Date(+parts[0], +parts[1] - 1, +parts[2])   // YYYY-MM-DD
+                    : new Date(+parts[2], +parts[1] - 1, +parts[0]);  // DD-MM-YYYY
+            } else {
+                d = new Date(params.trandate);
             }
-            if (!isNaN(d.getTime())) {
+            if (d && !isNaN(d.getTime())) {
                 itemReceipt.setValue({ fieldId: 'trandate', value: d });
             }
         }
@@ -292,7 +296,7 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search,
             // Dengan sourcing off, nilai class/location/department dari payload
             // (atau hasil transform dari source) menempel apa adanya,
             // tidak ditimpa sourcing rules (default item record / vendor).
-            var saveOpts = { ignoreMandatoryFields: true };
+            var saveOpts = { enableSourcing: false, ignoreMandatoryFields: true };
             irId = itemReceipt.save(saveOpts);
         } catch (saveErr) {
             if (saveErr.message && saveErr.message.indexOf('You can not receive more') > -1) {
