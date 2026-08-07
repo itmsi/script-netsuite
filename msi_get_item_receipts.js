@@ -16,6 +16,7 @@
      "createdfrom_text": "PO-",   // Filter by nomor dokumen asal (opsional)
      "createdfrom": 5157,         // Filter by ID dokumen asal (opsional)
      "vendor_id": 10,             // Filter by vendor ID (opsional)
+     "source_type": "purchase_order", // "purchase_order" | "transfer_order" | "customer_return" (opsional)
      "lastmodified": "2026-03-31T23:59:00+07:00" // Filter tanggal diubah (opsional)
    }
  }
@@ -96,6 +97,25 @@ define(['N/search', 'N/record'], (search, record) => {
                 ['type', 'anyof', 'ItemRcpt']
             ];
 
+            const sourceTypeMap = {
+                'purchase_order':  'PurchOrd',
+                'transfer_order':  'TrnfrOrd',
+                'customer_return': 'RtnAuth'
+            };
+            const sourceTypeMapReverse = {
+                'PurchOrd': 'purchase_order',
+                'TrnfrOrd': 'transfer_order',
+                'RtnAuth':  'customer_return'
+            };
+
+            if (filtersBody.source_type) {
+                let sourceTypeId = sourceTypeMap[filtersBody.source_type];
+                if (!sourceTypeId) {
+                    throw new Error("filters.source_type tidak valid. Gunakan: 'purchase_order', 'transfer_order', atau 'customer_return'.");
+                }
+                searchFilters.push('AND', ['createdfrom.type', 'anyof', sourceTypeId]);
+            }
+
             if (filtersBody.receipt_ids && Array.isArray(filtersBody.receipt_ids) && filtersBody.receipt_ids.length > 0) {
                 searchFilters.push('AND', ['internalid', 'anyof', filtersBody.receipt_ids]);
             }
@@ -128,9 +148,10 @@ define(['N/search', 'N/record'], (search, record) => {
                 filters: searchFilters,
                 columns: [
                     search.createColumn({ name: searchSortCol, sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
-                    'internalid', 'tranid', 'trandate', 'status', 'memo', 'entity', 
+                    'internalid', 'tranid', 'trandate', 'status', 'memo', 'entity',
                     'createdfrom', 'lastmodifieddate', 'datecreated',
-                    'location', 'subsidiarynohierarchy', 'department', 'class'
+                    'location', 'subsidiarynohierarchy', 'department', 'class',
+                    search.createColumn({ name: 'type', join: 'createdfrom' })
                 ]
             });
 
@@ -167,6 +188,8 @@ define(['N/search', 'N/record'], (search, record) => {
                     vendor_name:          res.getText('entity'),
                     createdfrom:          res.getValue('createdfrom'),
                     createdfrom_display:  res.getText('createdfrom'),
+                    source_type:          sourceTypeMapReverse[res.getValue({ name: 'type', join: 'createdfrom' })] || null,
+                    source_type_display:  res.getText({ name: 'type', join: 'createdfrom' }),
                     subsidiary:           res.getValue('subsidiarynohierarchy'),
                     subsidiary_display:   res.getText('subsidiarynohierarchy'),
                     location:             res.getValue('location'),
@@ -232,15 +255,15 @@ define(['N/search', 'N/record'], (search, record) => {
                     columns: [
                         search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
                         search.createColumn({ name: 'line', sort: search.Sort.ASC }),
-                        'item', 'quantity', 'rate', 'amount', 'memo', 
-                        'location', 'department', 'class', 
+                        'item', 'quantity', 'rate', 'amount', 'memo',
+                        'location', 'department', 'class',
                         search.createColumn({ name: 'inventorynumber', join: 'inventoryDetail' })
                     ]
                 });
 
                 lineSearch.run().each(res => {
                     let receiptId = res.getValue('internalid');
-                    let lineNum = res.getValue('line'); 
+                    let lineNum = res.getValue('line');
                     if (!linesByReceipt[receiptId]) linesByReceipt[receiptId] = [];
 
                     linesByReceipt[receiptId].push({
