@@ -83,12 +83,15 @@ define(['N/query'], function (query) {
         return val === 'T' || val === true;
     }
 
-    // Konversi ISO string "YYYY-MM-DDThh:mm:ss" → "MM/DD/YYYY" untuk TO_DATE SuiteQL
+    // Konversi ISO string ("2026-01-01T23:59:00+07:00") -> "YYYY-MM-DD HH:MI:SS"
+    // buat bind param TO_DATE. Ambil komponen apa adanya dari string (bukan lewat
+    // new Date()/hardcode urutan MM/DD/YYYY) - sebelumnya jam dibuang total dan
+    // urutan tanggal di-hardcode ke format US, gak locale-safe.
     function isoToNsDate(isoStr) {
         if (!isoStr) return null;
-        var datePart = isoStr.substring(0, 10); // "2026-01-01"
-        var dp   = datePart.split('-');
-        return dp[1] + '/' + dp[2] + '/' + dp[0]; // "MM/DD/YYYY"
+        var match = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}:\d{2}))?/.exec(String(isoStr));
+        if (!match) return null;
+        return match[1] + ' ' + (match[2] || '00:00:00');
     }
 
     function post(body) {
@@ -161,7 +164,10 @@ define(['N/query'], function (query) {
             // Filter: lastmodified (on or after)
             if (filters.lastmodified) {
                 var nsDate = isoToNsDate(filters.lastmodified);
-                conditions.push("lastmodifieddate >= TO_DATE(?, 'MM/DD/YYYY')");
+                if (!nsDate) {
+                    throw new Error("filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '" + filters.lastmodified + "'.");
+                }
+                conditions.push("lastmodifieddate >= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')");
                 params.push(nsDate);
             }
 

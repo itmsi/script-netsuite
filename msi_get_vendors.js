@@ -55,41 +55,14 @@ define(['N/search'], (search) => {
         return `${Y}-${M}-${D}T${HH}:${MM}:${SS}+07:00`;
     }
 
-    function isoToNetSuiteDate(isoStr) {
-        if (!isoStr) 
-          return null;
-
-    // Parse ISO 8601 
-    const d = new Date(isoStr);
-
-    // Ambil UTC lalu adjust ke WIB (+7)
-    let hour = d.getUTCHours() + 7;
-    const minute = d.getUTCMinutes();
-
-    // Handle overflow (misal >24)
-    if (hour >= 24) hour -= 24;
-
-    const day = d.getUTCDate();
-    const month = d.getUTCMonth() + 1;
-    const year = d.getUTCFullYear();
-
-    let ampm = hour >= 12 ? 'PM' : 'AM';
-    let hour12 = hour % 12;
-    if (hour12 === 0) hour12 = 12;
-
-    return `${day}/${month}/${year} ${hour}:${String(minute).padStart(2, '0')} ${ampm}`;
-    }
-
-
     function post(requestBody) {
 
         let page = parseInt(requestBody.page) || 1;
         let pageSize = parseInt(requestBody.pageSize || requestBody.page_size) || 50;
         let sortBy = requestBody.sort_by || 'lastmodifieddate';
         let sortOrder = (requestBody.sort_order || 'DESC').toUpperCase() === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
-        
+
         let filtersBody = requestBody.filters || {};
-        let lastModified = isoToNetSuiteDate(filtersBody.lastmodified) || null;
 
        // Filter is_inactive: true → inactive saja, false → aktif saja, tidak dikirim → semua
         let filters = [];
@@ -100,9 +73,25 @@ define(['N/search'], (search) => {
         }
 
         // Add last modified filter
-        if (lastModified) {
+        if (filtersBody.lastmodified) {
+            // Ambil komponen tanggal/jam APA ADANYA dari string ISO input (bukan
+            // lewat new Date() + getUTCHours()+7) - konversi manual UTC->WIB itu
+            // ada bug overflow (jam >=24 di-mod tanpa nambah hari), dan tetap
+            // bergantung ke asumsi offset yang gak dijamin benar. Asumsi di sini:
+            // offset di payload sama dengan timezone akun NetSuite (WIB, +07:00).
+            let lmMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(filtersBody.lastmodified));
+            if (!lmMatch) {
+                throw new Error("filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '" + filtersBody.lastmodified + "'.");
+            }
+
+            let lmSqlDate = lmMatch[1] + '-' + lmMatch[2] + '-' + lmMatch[3] + ' ' +
+                lmMatch[4] + ':' + lmMatch[5] + ':' + (lmMatch[6] || '00');
+
+            // Formula filter dgn TO_DATE + format mask eksplisit -> gak bergantung
+            // locale/timezone akun sama sekali, beda dari filter string biasa.
+            let lmFormula = "formulanumeric: CASE WHEN {lastmodifieddate} >= TO_DATE('" + lmSqlDate + "', 'YYYY-MM-DD HH24:MI:SS') THEN 1 ELSE 0 END";
             if (filters.length > 0) filters.push("AND");
-            filters.push(["lastmodifieddate", "onorafter", lastModified]);
+            filters.push([lmFormula, "equalto", "1"]);
         }
 
         if (filtersBody.internalid) {

@@ -4,54 +4,20 @@
  */
 define(['N/query'], (query) => {
 
-   function formatToISO(dateStr) {
-            if (!dateStr) return null;
-
-            // =========================
-            // 1. FORMAT: DD/MM/YYYY HH:mm AM/PM
-            // =========================
-            var fullRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i;
-            var m1 = dateStr.match(fullRegex);
-
-            if (m1) {
-                var day = parseInt(m1[1]);
-                var month = parseInt(m1[2]);
-                var year = parseInt(m1[3]);
-                var hour = parseInt(m1[4]);
-                var minute = parseInt(m1[5]);
-                var ampm = m1[6].toUpperCase();
-
-                if (ampm === "PM" && hour !== 12) hour += 12;
-                if (ampm === "AM" && hour === 12) hour = 0;
-
-                return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}:00+07:00`;
-            }
-
-            // =========================
-            // 2. FORMAT: DD/MM/YYYY (tanpa jam)
-            // =========================
-            var shortRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
-            var m2 = dateStr.match(shortRegex);
-
-            if (m2) {
-                var day = parseInt(m2[1]);
-                var month = parseInt(m2[2]);
-                var year = parseInt(m2[3]);
-
-                return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}T00:00:00+07:00`;
-            }
-
-            // =========================
-            // 3. FALLBACK
-            // =========================
-            var d = new Date(dateStr);
-            if (isNaN(d)) return dateStr;
-
-            return d.toISOString();
-        }
-
     // Konversi "T"/"F" string ke boolean
     const toBool = (val) => val === 'T' || val === true;
+
+    // Konversi ISO string ("2025-11-17T23:59:00+07:00") -> "YYYY-MM-DD HH:MI:SS"
+    // buat bind param TO_DATE. Ambil komponen apa adanya dari string (bukan lewat
+    // new Date()), karena mask 'YYYY-MM-DD HH24:MI:SS' gak cocok sama format ISO
+    // asli (ada 'T' dan offset timezone) - sebelumnya string ISO dilempar mentah2
+    // ke TO_DATE tanpa reformat, jadi mismatch format & bisa gagal parse.
+    const isoToOracleDateTime = (isoStr) => {
+        if (!isoStr) return null;
+        const match = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}:\d{2}))?/.exec(String(isoStr));
+        if (!match) return null;
+        return `${match[1]} ${match[2] || '00:00:00'}`;
+    };
 
     /**
      * POST handler - Get list of Locations
@@ -116,8 +82,12 @@ define(['N/query'], (query) => {
 
             // Filter: lastmodified (on or after)
             if (filters.lastmodified) {
+                const lmOracleDateTime = isoToOracleDateTime(filters.lastmodified);
+                if (!lmOracleDateTime) {
+                    throw new Error(`filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '${filters.lastmodified}'.`);
+                }
                 conditions.push(`l.lastmodifieddate >= TO_DATE(?, 'YYYY-MM-DD HH24:MI:SS')`);
-                params.push(filters.lastmodified);
+                params.push(lmOracleDateTime);
             }
 
             const whereClause = conditions.length > 0
@@ -138,7 +108,7 @@ define(['N/query'], (query) => {
                     BUILTIN.DF(l.locationtype)      AS location_type_name,
                     l.timezone,
                     l.makeinventoryavailable,
-                    l.lastmodifieddate
+                    TO_CHAR(l.lastmodifieddate, 'YYYY-MM-DD HH24:MI:SS') AS lastmodifieddate
                 FROM Location l
                 ${whereClause}
                 ORDER BY ${sortBy} ${sortOrder}
@@ -158,7 +128,7 @@ define(['N/query'], (query) => {
                 location_type_name       : r.location_type_name || null,
                 timezone                 : r.timezone || null,
                 make_inventory_available : toBool(r.makeinventoryavailable),
-                last_modified            : formatToISO(r.lastmodifieddate)
+                last_modified            : r.lastmodifieddate ? r.lastmodifieddate.replace(' ', 'T') + '+07:00' : null
             }));
 
             const totalRecords = allData.length;
