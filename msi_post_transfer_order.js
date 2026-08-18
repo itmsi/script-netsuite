@@ -109,8 +109,12 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
                 toRec.setValue({ fieldId: 'incoterm', value: context.incoterm });
             }
 
-            if (context.employee) {
-                toRec.setValue({ fieldId: 'employee', value: context.employee });
+            if(context.useitemcostastransfercost) {
+              toRec.setValue({ fieldId: 'useitemcostastransfercost', value: context.useitemcostastransfercost});
+            }
+
+             if(context.custbody_msi_createdby_api) {
+              toRec.setValue({ fieldId: 'custbody_msi_createdby_api', value: context.custbody_msi_createdby_api});
             }
 
             // AUTO-MAP HEADER CUSTBODY_*
@@ -157,15 +161,15 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
 
                     // Dates on line level
                     if (item.expectedshipdate) {
-                        toRec.setCurrentSublistValue({
-                            sublistId: 'item', fieldId: 'expectedshipdate',
-                            value: format.parse({ value: item.expectedshipdate, type: format.Type.DATE })
+                        toRec.setCurrentSublistValue({ 
+                            sublistId: 'item', fieldId: 'expectedshipdate', 
+                            value: format.parse({ value: item.expectedshipdate, type: format.Type.DATE }) 
                         });
                     }
                     if (item.expectedreceiptdate) {
-                        toRec.setCurrentSublistValue({
-                            sublistId: 'item', fieldId: 'expectedreceiptdate',
-                            value: format.parse({ value: item.expectedreceiptdate, type: format.Type.DATE })
+                        toRec.setCurrentSublistValue({ 
+                            sublistId: 'item', fieldId: 'expectedreceiptdate', 
+                            value: format.parse({ value: item.expectedreceiptdate, type: format.Type.DATE }) 
                         });
                     }
 

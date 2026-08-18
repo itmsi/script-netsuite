@@ -505,7 +505,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
 
             // ── Gabungkan header + lines + shipments ──────────────────────────
             let data = pagedHeaders.map(header => {
-                let lines = linesByPo[header.po_id] || [];
+                let lines = (linesByPo[header.po_id] || []).map((line, idx) => ({ ...line, linesequencenumber: idx + 1 }));
 
                 // Map shipment ke tiap line
                 lines.map(line => {
