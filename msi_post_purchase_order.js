@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  */
-define(['N/record','N/format','N/search'], function (record, format, search) {
+define(['N/record','N/format','N/search','N/log'], function (record, format, search, log) {
 
     function post(context) {
         var files = context.files;
@@ -242,6 +242,14 @@ define(['N/record','N/format','N/search'], function (record, format, search) {
                     fieldId: 'taxcode',
                     value: item.taxcode
                 });
+
+                if (item.cseg_msi_pro_segmen) {
+                    po.setCurrentSublistValue({
+                        sublistId: 'item',
+                        fieldId: 'cseg_msi_pro_segmen',
+                        value: item.cseg_msi_pro_segmen
+                    });
+                }
 
                 po.commitLine({ sublistId: 'item' });
             });

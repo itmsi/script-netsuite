@@ -503,6 +503,35 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                 }
             }
 
+            // ── Ambil Custom Segment "Project Segmentation" per-line via SuiteQL ──
+            // N/search (search.Type.PURCHASE_ORDER) tidak bisa resolve field custom
+            // segment ini sebagai kolom biasa (selalu invalid), jadi diambil via SuiteQL.
+            let lineSegmentMap = {};
+            if (foundPoIds.length > 0) {
+                try {
+                    let sqlSegment = `
+                        SELECT
+                            tl.uniquekey as line_uniquekey,
+                            tl.cseg_msi_pro_segmen as segment_id,
+                            BUILTIN.DF(tl.cseg_msi_pro_segmen) as segment_name
+                        FROM
+                            TransactionLine tl
+                        WHERE
+                            tl.transaction IN (${foundPoIds.join(',')})
+                            AND tl.mainline = 'F'
+                    `;
+                    let segmentResults = query.runSuiteQL({ query: sqlSegment }).asMappedResults();
+                    segmentResults.forEach(r => {
+                        lineSegmentMap[r.line_uniquekey] = {
+                            id: r.segment_id,
+                            name: r.segment_name
+                        };
+                    });
+                } catch (e) {
+                    // Jika query gagal, biarkan kosong
+                }
+            }
+
             // ── Gabungkan header + lines + shipments ──────────────────────────
             let data = pagedHeaders.map(header => {
                 let lines = (linesByPo[header.po_id] || []).map((line, idx) => ({ ...line, linesequencenumber: idx + 1 }));
@@ -513,6 +542,11 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     line.inbound_shipment_number = shipmentData ? shipmentData.number : null;
                     line.inbound_shipment_line_id = shipmentData ? shipmentData.id : null;
                     line.has_inbound = !!shipmentData;
+
+                    let segmentData = lineSegmentMap[line.line_id] || null;
+                    line.cseg_msi_pro_segmen = segmentData ? segmentData.id : null;
+                    line.cseg_msi_pro_segmen_display = segmentData ? segmentData.name : null;
+
                     return line;
                 });
 

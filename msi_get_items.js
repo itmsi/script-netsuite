@@ -54,54 +54,42 @@ define(['N/search'], (search) => {
         return `${Y}-${M}-${D}T${HH}:${MM}:${SS}+07:00`;
     }
 
-    function isoToNetSuiteDate(isoStr) {
-        if (!isoStr) return null;
-
-        // Parse ISO 8601 string
-        const d = new Date(isoStr); // ini sudah menghitung +07 dengan benar
-
-        const day = d.getDate();
-        const month = d.getMonth() + 1;
-        const year = d.getFullYear();
-
-        let hour = d.getHours();
-        const minute = d.getMinutes();
-
-        let ampm = "AM";
-        if (hour >= 12) {
-            ampm = "PM";
-            if (hour > 12) hour -= 12;
-        } else if (hour === 0) {
-            hour = 12; // 00:00 → 12 AM
-        }
-
-        return `${day}/${month}/${year} ${hour}:${String(minute).padStart(2, "0")} ${ampm}`;
-    }
-
     function post(requestBody) {
 
         let page = parseInt(requestBody.page) || 1;
         let pageSize = parseInt(requestBody.pageSize || requestBody.page_size) || 50;
-        
+
         let sortMap = {
             'lastmodified': 'modified',
             'lastmodifieddate': 'modified'
         };
         let rawSortBy = requestBody.sort_by || 'lastmodified';
         let sortBy = sortMap[rawSortBy] || rawSortBy;
-        
+
         let sortOrder = (requestBody.sort_order || 'DESC').toUpperCase() === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
-        
+
         let filtersBody = requestBody.filters || {};
-        let lastModified = isoToNetSuiteDate(filtersBody.lastmodified) || null;
 
         // Only active items
         let filters = [
             ["isinactive", "is", "F"]
         ];
 
-        if (lastModified) {
-            filters.push("AND", ["modified", "onorafter", lastModified]);
+        if (filtersBody.lastmodified) {
+            // Ambil komponen tanggal/jam APA ADANYA dari string ISO input (bukan
+            // lewat new Date() + local getter) - getter lokal itu bergantung ke
+            // timezone runtime yang gak konsisten. Asumsi: offset di payload
+            // sama dengan timezone akun NetSuite (WIB, +07:00).
+            let lmMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(filtersBody.lastmodified));
+            if (!lmMatch) {
+                throw new Error("filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '" + filtersBody.lastmodified + "'.");
+            }
+
+            let lmSqlDate = lmMatch[1] + '-' + lmMatch[2] + '-' + lmMatch[3] + ' ' +
+                lmMatch[4] + ':' + lmMatch[5] + ':' + (lmMatch[6] || '00');
+
+            let lmFormula = "formulanumeric: CASE WHEN {modified} >= TO_DATE('" + lmSqlDate + "', 'YYYY-MM-DD HH24:MI:SS') THEN 1 ELSE 0 END";
+            filters.push("AND", [lmFormula, "equalto", "1"]);
         }
 
         if (filtersBody.internalid) {
@@ -202,7 +190,8 @@ define(['N/search'], (search) => {
                             qtyCommitted: row.getValue("locationquantitycommitted") || "0",
                             qtyBackOrder: row.getValue("locationquantitybackordered") || "0",
                             qtyInTransit: row.getValue("locationquantityintransit") || "0",
-                            serialNumbers: []
+                            serialNumbers: [],
+                            serialNumbersUsed: []
                         };
                         locMap[locId] = locObj;
                         itemObj.locations.push(locObj);
@@ -210,7 +199,9 @@ define(['N/search'], (search) => {
                     return true;
                 });
 
-                // Fetch serial numbers with location via INVENTORY_NUMBER search
+                // Fetch serial numbers with location via INVENTORY_NUMBER search.
+                // quantityonhand > 0 → still in stock (serialNumbers);
+                // quantityonhand <= 0 → already used/sold/consumed (serialNumbersUsed).
                 var snSearch = search.create({
                     type: search.Type.INVENTORY_NUMBER,
                     filters: [
@@ -218,19 +209,28 @@ define(['N/search'], (search) => {
                     ],
                     columns: [
                         search.createColumn({ name: "inventorynumber" }),
-                        search.createColumn({ name: "location" })
+                        search.createColumn({ name: "location" }),
+                        search.createColumn({ name: "quantityonhand" })
                     ]
                 });
 
+                // Dedup per SN+location (not just SN), since the same serial
+                // number can have rows in more than one location.
                 var seenSn = {};
                 snSearch.run().each(function(snRow) {
                     var sNum = snRow.getValue("inventorynumber");
                     var snLocId = snRow.getValue("location");
-                    if (sNum && !seenSn[sNum]) {
-                        seenSn[sNum] = true;
+                    var qtyOnHand = parseFloat(snRow.getValue("quantityonhand")) || 0;
+                    var seenKey = sNum + '|' + snLocId;
+                    if (sNum && snLocId && !seenSn[seenKey]) {
+                        seenSn[seenKey] = true;
                         // Insert SN into the matching location
-                        if (snLocId && locMap[snLocId]) {
-                            locMap[snLocId].serialNumbers.push(sNum);
+                        if (locMap[snLocId]) {
+                            if (qtyOnHand > 0) {
+                                locMap[snLocId].serialNumbers.push(sNum);
+                            } else {
+                                locMap[snLocId].serialNumbersUsed.push(sNum);
+                            }
                         }
                     }
                     return true;
