@@ -141,6 +141,52 @@ define(['N/search'], (search) => {
         const searchPage = pagedData.fetch({ index: page - 1 });
         const data = [];
 
+        // Ambil price level (currency IDR) buat semua item di halaman ini
+        // sekaligus lewat search type "pricing" - lebih pasti dibanding
+        // record.load ke sublist "priceN" karena nomor sublist per-currency
+        // itu tidak selalu sama urutannya dengan tab currency yang tampil di UI.
+        const itemIds = searchPage.data.map(item => item.id);
+        const priceLevelMap = {};
+
+        if (itemIds.length > 0) {
+            try {
+                const priceSearch = search.create({
+                    type: 'pricing',
+                    filters: [
+                        ["item", "anyof", itemIds]
+                    ],
+                    columns: [
+                        search.createColumn({ name: "item" }),
+                        search.createColumn({ name: "pricelevel" }),
+                        search.createColumn({ name: "currency" }),
+                        search.createColumn({ name: "unitprice" })
+                    ]
+                });
+
+                // Search type "pricing" tidak expose breakdown quantity tier,
+                // jadi semua price level dikelompokkan di bawah key "0".
+                priceSearch.run().each(row => {
+                    const currencyText = row.getText("currency");
+                    if (currencyText === "IDR") {
+                        const pItemId = row.getValue("item");
+                        const pQty = "0";
+                        const pLevelId = row.getValue("pricelevel");
+                        const pLevelName = row.getText("pricelevel");
+                        const pPrice = row.getValue("unitprice");
+                        if (!priceLevelMap[pItemId]) priceLevelMap[pItemId] = {};
+                        if (!priceLevelMap[pItemId][pQty]) priceLevelMap[pItemId][pQty] = [];
+                        priceLevelMap[pItemId][pQty].push({
+                            priceLevel: pLevelName || pLevelId,
+                            price: pPrice || "0"
+                        });
+                    }
+                    return true;
+                });
+            } catch (e) {
+                log.debug('Price Level Search Error', e.message);
+            }
+        }
+
         searchPage.data.forEach(item => {
 
             const itemId = item.id;
@@ -153,6 +199,7 @@ define(['N/search'], (search) => {
                 type_id: item.getValue("type"),
                 type: item.getText("type"),
                 lastModifiedDate: formatToISO(rawDate),
+                priceLevels: priceLevelMap[String(itemId)] || {},
                 locations: []
             };
 
