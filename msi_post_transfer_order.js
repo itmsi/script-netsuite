@@ -17,9 +17,12 @@
     "memo": "Transfer order memo",         // (Optional) Memo
     "department": 4,                       // (Optional) Department internal ID
     "class": 5,                            // (Optional) Class internal ID
-    "status": "A",                         // (Optional) Order Status
     "incoterm": 6,                         // (Optional) Incoterm internal ID
     "employee": 7,                         // (Optional) Employee internal ID
+    "firmed": true,                        // (Optional) Firmed checkbox
+    "useitemcostastransfercost": true,     // (Optional) Use Item Cost As Transfer Cost checkbox
+    "custbody_me_logistic_vendor": 8,      // (Optional) Logistic Vendor internal ID (auto-mapped lewat custbody_*)
+    "custbody_me_inv_customer": 9,         // (Optional) Customer internal ID (auto-mapped lewat custbody_*)
     "custbody_...": "value",               // (Optional) Any custom body field starting with 'custbody' will be auto-mapped
     
     "items": [                             // (Optional) Array of line items
@@ -31,6 +34,7 @@
             "class": 5,                    // (Optional) Line class
             "expectedshipdate": "2/1/2024",// (Optional) Expected Ship Date
             "expectedreceiptdate": "2/5/2024",// (Optional) Expected Receipt Date
+            "rate": 100000,                // (Optional) Transfer Price (can also use "transfer_price")
             "custcol_...": "value"         // (Optional) Any custom column field starting with 'custcol' will be auto-mapped
         }
     ],
@@ -42,6 +46,15 @@
         }
     ]
  }
+ *
+ * =============================================
+ * CATATAN STATUS (Pending Fulfillment / Pending Receipt / Received)
+ * Status Transfer Order TIDAK BISA di-set manual lewat field 'orderstatus'
+ * (NetSuite menolak dengan "Invalid Field Value") — field itu murni
+ * computed berdasarkan progres fulfillment/receipt yang sebenarnya.
+ * Untuk memajukan status ke "Received", buat Item Receipt dari TO ini
+ * lewat msi_post_transfer_order_item_receipt.js (record.transform).
+ * =============================================
  */
 define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, search, log) {
 
@@ -101,12 +114,16 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
                 toRec.setValue({ fieldId: 'class', value: context.class });
             }
 
-            if (context.status) {
-                toRec.setValue({ fieldId: 'orderstatus', value: context.status });
-            }
-
             if (context.incoterm) {
                 toRec.setValue({ fieldId: 'incoterm', value: context.incoterm });
+            }
+
+            if (context.employee) {
+                toRec.setValue({ fieldId: 'employee', value: context.employee });
+            }
+
+            if (context.firmed !== undefined) {
+                toRec.setValue({ fieldId: 'firmed', value: context.firmed });
             }
 
             if(context.useitemcostastransfercost) {
@@ -157,6 +174,9 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
                     }
                     if (item.class) {
                         toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'class', value: item.class });
+                    }
+                    if (item.rate !== undefined || item.transfer_price !== undefined) {
+                        toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'rate', value: item.rate !== undefined ? item.rate : item.transfer_price });
                     }
 
                     // Dates on line level

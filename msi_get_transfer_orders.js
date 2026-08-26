@@ -25,7 +25,7 @@
  * G → Transfer Order : Received
  * =============================================
  */
-define(['N/search', 'N/query'], function (search, query) {
+define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
 
     function formatToISO(dateStr) {
         if (!dateStr) return null;
@@ -97,9 +97,21 @@ define(['N/search', 'N/query'], function (search, query) {
             ];
 
             if (filters.lastmodified) {
-                var d = new Date(filters.lastmodified);
-                var nsDate = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
-                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
+                // Ambil komponen tanggal/jam APA ADANYA dari string ISO input
+                // (bukan lewat new Date() + local getter) - getter lokal itu
+                // bergantung ke timezone runtime yang gak konsisten, dan
+                // sebelumnya jam dibuang total. Asumsi: offset di payload
+                // sama dengan timezone akun NetSuite (WIB, +07:00).
+                var lmMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(filters.lastmodified));
+                if (!lmMatch) {
+                    throw new Error("filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '" + filters.lastmodified + "'.");
+                }
+
+                var lmSqlDate = lmMatch[1] + '-' + lmMatch[2] + '-' + lmMatch[3] + ' ' +
+                    lmMatch[4] + ':' + lmMatch[5] + ':' + (lmMatch[6] || '00');
+
+                var lmFormula = "formulanumeric: CASE WHEN {lastmodifieddate} >= TO_DATE('" + lmSqlDate + "', 'YYYY-MM-DD HH24:MI:SS') THEN 1 ELSE 0 END";
+                searchFilters.push('AND', [lmFormula, 'equalto', '1']);
             }
 
             if (filters.id || filters.internalid) {
@@ -120,7 +132,18 @@ define(['N/search', 'N/query'], function (search, query) {
                 search.createColumn({ name: 'lastmodifieddate' }),
                 search.createColumn({ name: 'datecreated' }),
                 search.createColumn({ name: 'location' }),           // from location
-                search.createColumn({ name: 'transferlocation' })    // to location
+                search.createColumn({ name: 'transferlocation' }),   // to location
+                search.createColumn({ name: 'subsidiary' }),
+                search.createColumn({ name: 'firmed' }),                          // Firmed
+                search.createColumn({ name: 'incoterm' }),
+                search.createColumn({ name: 'custbody_me_logistic_vendor' }),   // Logistic Vendor
+                search.createColumn({ name: 'salesrep' }),                       // Employee (alias search column-nya 'salesrep', bukan 'employee')
+                search.createColumn({ name: 'department' }),
+                search.createColumn({ name: 'class' }),
+                search.createColumn({ name: 'custbody_me_inv_customer' }),      // Customer
+                search.createColumn({ name: 'custbody_msi_createdby_api' }),
+                search.createColumn({ name: 'amount' }),                        // Summary Total
+                search.createColumn({ name: 'customform' })
             ];
 
             // Apply sort ke kolom yang sesuai
@@ -159,6 +182,14 @@ define(['N/search', 'N/query'], function (search, query) {
             pageResult.data.forEach(function (r) {
                 var fromLocId = r.getValue('location');
                 var toLocId = r.getValue('transferlocation');
+                var subsidiaryId = r.getValue('subsidiary');
+                var incotermId = r.getValue('incoterm');
+                var logisticVendorId = r.getValue('custbody_me_logistic_vendor');
+                var employeeId = r.getValue('salesrep');
+                var departmentId = r.getValue('department');
+                var classId = r.getValue('class');
+                var customerId = r.getValue('custbody_me_inv_customer');
+
                 map[String(r.id)] = {
                     id: String(r.id),
                     tranid: r.getValue('tranid'),
@@ -170,13 +201,90 @@ define(['N/search', 'N/query'], function (search, query) {
                     to_location_id: toLocId ? Number(toLocId) : null,
                     to_location_name: r.getText('transferlocation') || null,
                     memo: r.getValue('memo') || null,
+                    subsidiary_id: subsidiaryId ? Number(subsidiaryId) : null,
+                    subsidiary_name: r.getText('subsidiary') || null,
+                    firmed: r.getValue('firmed') === true || r.getValue('firmed') === 'T',
+                    incoterm_id: incotermId ? Number(incotermId) : null,
+                    incoterm_name: r.getText('incoterm') || null,
+                    logistic_vendor_id: logisticVendorId ? Number(logisticVendorId) : null,
+                    logistic_vendor_name: r.getText('custbody_me_logistic_vendor') || null,
+                    employee_id: employeeId ? Number(employeeId) : null,
+                    employee_name: r.getText('salesrep') || null,
+                    department_id: departmentId ? Number(departmentId) : null,
+                    department_name: r.getText('department') || null,
+                    class_id: classId ? Number(classId) : null,
+                    class_name: r.getText('class') || null,
+                    customer_id: customerId ? Number(customerId) : null,
+                    customer_name: r.getText('custbody_me_inv_customer') || null,
+                    custbody_msi_createdby_api: r.getValue('custbody_msi_createdby_api'),
+                    use_item_cost_as_transfer_cost: false, // di-isi dari SuiteQL, lihat blok di bawah
+                    total: (function (v) { return v !== null && v !== '' ? Math.abs(Number(v)) : 0; })(r.getValue('amount')),
+                    customform: r.getValue('customform') ? Number(r.getValue('customform')) : null,
+                    customform_display: r.getText('customform') || null,
                     last_modified: formatToISO(r.getValue('lastmodifieddate')),
                     datecreated: formatToISO(r.getValue('datecreated')),
-                    items: []
+                    items: [],
+                    files: []
                 };
             });
 
             var ids = Object.keys(map);
+
+            // ── useitemcostastransfercost via SuiteQL ───────────────────────────
+            // Field ini valid di record.getValue() & kolom asli tabel 'transaction',
+            // tapi TIDAK diekspos sebagai search.createColumn (sudah dicek: nama asli
+            // maupun beberapa alias semuanya invalid) → diambil lewat N/query.
+            var uictPlaceholders = ids.map(function () { return '?'; }).join(',');
+            var uictResults = query.runSuiteQL({
+                query: 'SELECT id, useitemcostastransfercost FROM transaction WHERE id IN (' + uictPlaceholders + ')',
+                params: ids
+            }).asMappedResults();
+            uictResults.forEach(function (row) {
+                var toId = String(row.id);
+                if (map[toId]) {
+                    map[toId].use_item_cost_as_transfer_cost = row.useitemcostastransfercost === 'T';
+                }
+            });
+
+            // ── Search Custom Attach Files via N/search ─────────────────────────
+            // Pola sama seperti msi_get_purchase_orders.js / msi_get_sales_orders.js
+            try {
+                // custrecord_msi_transaction_id = Free-Form Text, tidak support ANYOF
+                var idOrFilters = [];
+                ids.forEach(function (id, i) {
+                    if (i > 0) idOrFilters.push('OR');
+                    idOrFilters.push(['custrecord_msi_transaction_id', 'is', String(id)]);
+                });
+
+                var fileSearch = search.create({
+                    type: 'customrecord_msi_web_url_file',
+                    filters: [
+                        idOrFilters,
+                        'AND',
+                        ['isinactive', 'is', 'F']
+                    ],
+                    columns: [
+                        'name',
+                        'custrecord_msi_transaction_id',
+                        'custrecord_msi_web_url',
+                        'custrecord_msi_createdby_api_file'
+                    ]
+                });
+
+                fileSearch.run().each(function (r) {
+                    var toId = r.getValue('custrecord_msi_transaction_id');
+                    if (!toId || !map[toId]) return true;
+                    map[toId].files.push({
+                        id: r.id,
+                        fileName: r.getValue('name'),
+                        fileUrl: r.getValue('custrecord_msi_web_url'),
+                        created_by_api: r.getValue('custrecord_msi_createdby_api_file')
+                    });
+                    return true;
+                });
+            } catch (e) {
+                log.error('File Search Error', e.message);
+            }
 
             // ── Line items via Search ─────────────────────────────────────────
             // - Field native (quantitycommitted, quantitypicked, dll) diambil dari TO langsung.
@@ -214,7 +322,14 @@ define(['N/search', 'N/query'], function (search, query) {
                         search.createColumn({ name: 'quantitypicked' }),
                         search.createColumn({ name: 'quantitypacked' }),
                         search.createColumn({ name: 'quantityshiprecv' }), // Fulfilled (source) atau Received (dest)
-                        search.createColumn({ name: 'location' })
+                        search.createColumn({ name: 'location' }),
+                        search.createColumn({ name: 'rate' }),              // Transfer Price
+                        search.createColumn({ name: 'amount' }),
+                        search.createColumn({ name: 'expectedreceiptdate' }),
+                        search.createColumn({ name: 'orderpriority' }),
+                        search.createColumn({ name: 'commitmentfirm' }),   // Commitment Confirmed
+                        search.createColumn({ name: 'closed' }),            // alias search column untuk 'isclosed'
+                        search.createColumn({ name: 'custitem_me_unit_type', join: 'item' }) // Units (dari Item record, 'units' native TIDAK valid di TO)
                     ]
                 });
 
@@ -243,6 +358,10 @@ define(['N/search', 'N/query'], function (search, query) {
                     var shiprecv  = parseQty(r.getValue('quantityshiprecv'));
                     var backorder = Math.max(0, qty - committed - picked);
 
+                    var rateVal   = r.getValue('rate');
+                    var amountVal = r.getValue('amount');
+                    var expReceiptDate = r.getValue('expectedreceiptdate');
+
                     var grpKey = toId + '_' + String(itemId);
                     if (!lineGroups[grpKey]) lineGroups[grpKey] = [];
                     lineGroups[grpKey].push({
@@ -260,6 +379,13 @@ define(['N/search', 'N/query'], function (search, query) {
                         fulfilled:          shiprecv,
                         received:           0,        // akan di-isi dari dest row
                         backorder:          backorder,
+                        transfer_price:     rateVal !== null && rateVal !== '' ? Number(rateVal) : 0,
+                        amount:             amountVal !== null && amountVal !== '' ? Math.abs(Number(amountVal)) : 0,
+                        units:              r.getText({ name: 'custitem_me_unit_type', join: 'item' }) || null,
+                        expected_receipt_date: expReceiptDate || null,
+                        order_priority:     r.getValue('orderpriority') || null,
+                        commitment_confirmed: r.getValue('commitmentfirm') === true || r.getValue('commitmentfirm') === 'T',
+                        closed:             r.getValue('closed') === true || r.getValue('closed') === 'T',
                         from_location_id:   map[toId].from_location_id,
                         from_location_name: map[toId].from_location_name
                     });
@@ -294,7 +420,14 @@ define(['N/search', 'N/query'], function (search, query) {
                         var lineObj = realSrcRows[j];
                         if (destRows[j]) {
                             // field quantityshiprecv pada destination row adalah Received Qty!
-                            lineObj.received = destRows[j].shipped; 
+                            lineObj.received = destRows[j].shipped;
+                            // Expected Receipt Date & Closed lebih relevan dari sisi dest (penerimaan)
+                            if (!lineObj.expected_receipt_date && destRows[j].expected_receipt_date) {
+                                lineObj.expected_receipt_date = destRows[j].expected_receipt_date;
+                            }
+                            if (destRows[j].closed) {
+                                lineObj.closed = destRows[j].closed;
+                            }
                         }
                         realLines.push(lineObj);
                     }
@@ -319,6 +452,13 @@ define(['N/search', 'N/query'], function (search, query) {
                         fulfilled:          e.fulfilled,
                         received:           e.received,
                         backorder:          e.backorder,
+                        transfer_price:     e.transfer_price,
+                        amount:             e.amount,
+                        units:              e.units,
+                        expected_receipt_date: formatToISO(e.expected_receipt_date),
+                        order_priority:     e.order_priority,
+                        commitment_confirmed: e.commitment_confirmed,
+                        closed:             e.closed,
                         from_location_id:   e.from_location_id,
                         from_location_name: e.from_location_name
                     });
