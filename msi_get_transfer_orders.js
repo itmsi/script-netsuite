@@ -329,7 +329,8 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                         search.createColumn({ name: 'orderpriority' }),
                         search.createColumn({ name: 'commitmentfirm' }),   // Commitment Confirmed
                         search.createColumn({ name: 'closed' }),            // alias search column untuk 'isclosed'
-                        search.createColumn({ name: 'custitem_me_unit_type', join: 'item' }) // Units (dari Item record, 'units' native TIDAK valid di TO)
+                        search.createColumn({ name: 'custitem_me_unit_type', join: 'item' }), // Units (dari Item record, 'units' native TIDAK valid di TO)
+                        search.createColumn({ name: 'displayname', join: 'item' })
                     ]
                 });
 
@@ -370,6 +371,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                         _locNum:            locNum,
                         item_id:            Number(itemId),
                         item_name:          r.getText('item'),
+                        item_displayname:   r.getValue({ name: 'displayname', join: 'item' }) || null,
                         description:        r.getValue('memo') || null,
                         quantity:           qty,
                         committed:          committed,
@@ -443,6 +445,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                         line_number:        n + 1,
                         item_id:            e.item_id,
                         item_name:          e.item_name,
+                        item_displayname:   e.item_displayname,
                         description:        e.description,
                         quantity:           e.quantity,
                         committed:          e.committed,
