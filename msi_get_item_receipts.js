@@ -22,7 +22,7 @@
  }
  */
 
-define(['N/search', 'N/record'], (search, record) => {
+define(['N/search', 'N/record', 'N/log'], (search, record, log) => {
     function formatToISO(dateStr) {
         if (!dateStr) return null;
 
@@ -294,9 +294,53 @@ define(['N/search', 'N/record'], (search, record) => {
                 });
             }
 
-            // ── Gabungkan header + lines ──────────────────────────
+            // ── Search Custom Attach Files ────────────────────────────────────
+            // Pola sama seperti msi_get_transfer_orders.js / msi_get_item_fulfillments.js
+            let filesByReceipt = {};
+            if (foundReceiptIds.length > 0) {
+                try {
+                    let idOrFilters = [];
+                    foundReceiptIds.forEach((id, i) => {
+                        if (i > 0) idOrFilters.push('OR');
+                        idOrFilters.push(['custrecord_msi_transaction_id', 'is', String(id)]);
+                    });
+
+                    let fileSearch = search.create({
+                        type: 'customrecord_msi_web_url_file',
+                        filters: [
+                            idOrFilters,
+                            'AND',
+                            ['isinactive', 'is', 'F']
+                        ],
+                        columns: [
+                            'name',
+                            'custrecord_msi_transaction_id',
+                            'custrecord_msi_web_url',
+                            'custrecord_msi_createdby_api_file'
+                        ]
+                    });
+
+                    fileSearch.run().each(res => {
+                        let receiptId = res.getValue('custrecord_msi_transaction_id');
+                        if (!receiptId) return true;
+                        if (!filesByReceipt[receiptId]) filesByReceipt[receiptId] = [];
+                        filesByReceipt[receiptId].push({
+                            id: res.id,
+                            fileName: res.getValue('name'),
+                            fileUrl: res.getValue('custrecord_msi_web_url'),
+                            created_by_api: res.getValue('custrecord_msi_createdby_api_file')
+                        });
+                        return true;
+                    });
+                } catch (e) {
+                    log.error('File Search Error', e.message);
+                }
+            }
+
+            // ── Gabungkan header + lines + files ──────────────────────────
             let data = pagedHeaders.map(header => {
                 header.lines = linesByReceipt[header.receipt_id] || [];
+                header.files = filesByReceipt[String(header.receipt_id)] || [];
                 return header;
             });
 
