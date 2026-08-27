@@ -337,10 +337,53 @@ define(['N/search', 'N/record', 'N/log'], (search, record, log) => {
                 }
             }
 
-            // ── Gabungkan header + lines + files ──────────────────────────
+            // ── Search User Notes ─────────────────────────────────────────────
+            // Pola sama seperti msi_get_item_fulfillments.js
+            let notesByReceipt = {};
+            if (foundReceiptIds.length > 0) {
+                let noteSearch = search.create({
+                    type: 'note',
+                    filters: [
+                        search.createFilter({
+                            name: 'internalid',
+                            join: 'transaction',
+                            operator: search.Operator.ANYOF,
+                            values: foundReceiptIds
+                        })
+                    ],
+                    columns: [
+                        'internalid',
+                        search.createColumn({ name: 'internalid', join: 'transaction' }),
+                        'title', 'note', 'notedate', 'author', 'direction', 'notetype'
+                    ]
+                });
+
+                let processedNoteIds = {};
+                noteSearch.run().each(res => {
+                    let noteRecordId = res.id;
+                    if (processedNoteIds[noteRecordId]) return true;
+                    processedNoteIds[noteRecordId] = true;
+
+                    let receiptId = res.getValue({ name: 'internalid', join: 'transaction' });
+                    if (!notesByReceipt[receiptId]) notesByReceipt[receiptId] = [];
+
+                    notesByReceipt[receiptId].push({
+                        title: res.getValue('title'),
+                        note: res.getValue('note'),
+                        date: res.getValue('notedate'),
+                        author: res.getText('author'),
+                        direction: res.getValue('direction'),
+                        type: res.getText('notetype')
+                    });
+                    return true;
+                });
+            }
+
+            // ── Gabungkan header + lines + files + notes ──────────────────────────
             let data = pagedHeaders.map(header => {
                 header.lines = linesByReceipt[header.receipt_id] || [];
                 header.files = filesByReceipt[String(header.receipt_id)] || [];
+                header.user_notes = notesByReceipt[header.receipt_id] || [];
                 return header;
             });
 
