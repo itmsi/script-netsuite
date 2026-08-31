@@ -34,7 +34,8 @@
             "class": 5,                    // (Optional) Line class
             "expectedshipdate": "2/1/2024",// (Optional) Expected Ship Date
             "expectedreceiptdate": "2/5/2024",// (Optional) Expected Receipt Date
-            "rate": 100000,                // (Optional) Transfer Price (can also use "transfer_price")
+            "rate": 100000,                // (Optional) Transfer Price (can also use "transfer_price"). Amount otomatis = rate * quantity. JANGAN dikirim bareng "amount" - NetSuite selalu recalc Amount dari Rate x Qty saat commit, jadi Rate menang & override "amount" manapun
+            "amount": 1000000,             // (Optional) Kirim INI SAJA (tanpa "rate") kalau mau set total Amount secara manual/independen, misal saat "Use Item Cost As Transfer Cost" aktif (Rate jadi read-only, hanya Amount yang bisa di-override)
             "custcol_...": "value"         // (Optional) Any custom column field starting with 'custcol' will be auto-mapped
         }
     ],
@@ -176,7 +177,16 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
                         toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'class', value: item.class });
                     }
                     if (item.rate !== undefined || item.transfer_price !== undefined) {
-                        toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'rate', value: item.rate !== undefined ? item.rate : item.transfer_price });
+                        var lineRate = item.rate !== undefined ? item.rate : item.transfer_price;
+                        toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'rate', value: lineRate });
+
+                        // Default Amount = qty x rate (buat kondisi Rate disabled/cost-sourced di UI).
+                        // Kalau item.amount eksplisit dikirim, itu akan menimpa nilai ini di bawah.
+                        var lineQty = item.quantity !== undefined ? item.quantity : toRec.getCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity' });
+                        toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'amount', value: lineRate * lineQty });
+                    }
+                    if (item.amount !== undefined) {
+                        toRec.setCurrentSublistValue({ sublistId: 'item', fieldId: 'amount', value: item.amount });
                     }
 
                     // Dates on line level
@@ -211,8 +221,12 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
             }
 
             // 4. SAVE
+            // enableSourcing:false biar Amount yang di-set manual (item.amount / item.rate x qty)
+            // tidak ke-recalculate ulang dari Rate x Quantity oleh sourcing engine NetSuite saat save.
+            // NOTE: kalau "useitemcostastransfercost" (Use Item Cost As Transfer Cost) dipakai, cek lagi
+            // apakah Rate masih ke-source otomatis dari Item Cost dgn enableSourcing:false ini.
             var toId = toRec.save({
-                enableSourcing: true,
+                enableSourcing: false,
                 ignoreMandatoryFields: true
             });
 
