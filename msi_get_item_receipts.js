@@ -16,13 +16,13 @@
      "createdfrom_text": "PO-",   // Filter by nomor dokumen asal (opsional)
      "createdfrom": 5157,         // Filter by ID dokumen asal (opsional)
      "vendor_id": 10,             // Filter by vendor ID (opsional)
-     "source_type": "purchase_order", // "purchase_order" | "transfer_order" | "customer_return" (opsional)
+     "source_type": "purchase_order", // "purchase_order" | "transfer_order" | "customer_return" | "inbound_shipment" (opsional)
      "lastmodified": "2026-03-31T23:59:00+07:00" // Filter tanggal diubah (opsional)
    }
  }
  */
 
-define(['N/search', 'N/record', 'N/log'], (search, record, log) => {
+define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query) => {
     function formatToISO(dateStr) {
         if (!dateStr) return null;
 
@@ -98,20 +98,22 @@ define(['N/search', 'N/record', 'N/log'], (search, record, log) => {
             ];
 
             const sourceTypeMap = {
-                'purchase_order':  'PurchOrd',
-                'transfer_order':  'TrnfrOrd',
-                'customer_return': 'RtnAuth'
+                'purchase_order':   'PurchOrd',
+                'transfer_order':   'TrnfrOrd',
+                'customer_return':  'RtnAuth',
+                'inbound_shipment': 'InbShip'
             };
             const sourceTypeMapReverse = {
                 'PurchOrd': 'purchase_order',
                 'TrnfrOrd': 'transfer_order',
-                'RtnAuth':  'customer_return'
+                'RtnAuth':  'customer_return',
+                'InbShip':  'inbound_shipment'
             };
 
             if (filtersBody.source_type) {
                 let sourceTypeId = sourceTypeMap[filtersBody.source_type];
                 if (!sourceTypeId) {
-                    throw new Error("filters.source_type tidak valid. Gunakan: 'purchase_order', 'transfer_order', atau 'customer_return'.");
+                    throw new Error("filters.source_type tidak valid. Gunakan: 'purchase_order', 'transfer_order', 'customer_return', atau 'inbound_shipment'.");
                 }
                 searchFilters.push('AND', ['createdfrom.type', 'anyof', sourceTypeId]);
             }
@@ -294,6 +296,41 @@ define(['N/search', 'N/record', 'N/log'], (search, record, log) => {
                 });
             }
 
+            // ── Ambil Data Inbound Shipment via SuiteQL ──────────────────────
+            // "inboundshipment" bukan search column yang valid di Item Receipt search
+            // (SSS_INVALID_SRCH_COL) maupun field record.load biasa — pola query-nya
+            // disamain persis seperti msi_get_purchase_orders.js: join InboundShipmentItem
+            // ke PO (via createdfrom si receipt, yang levelnya header/PO, bukan per-line).
+            let shipmentByPoId = {};
+            let poIdsForShipment = pagedHeaders
+                .map(h => h.createdfrom)
+                .filter(id => id && /^\d+$/.test(String(id)));
+            poIdsForShipment = poIdsForShipment.filter((id, idx) => poIdsForShipment.indexOf(id) === idx);
+
+            if (poIdsForShipment.length > 0) {
+                try {
+                    let sqlShipment = `
+                        SELECT
+                            isi.purchaseordertransaction as po_id,
+                            BUILTIN.DF(isi.inboundshipment) as shipment_number,
+                            isi.inboundshipment as shipment_id
+                        FROM
+                            InboundShipmentItem isi
+                        WHERE
+                            isi.purchaseordertransaction IN (${poIdsForShipment.join(',')})
+                    `;
+                    let shipmentResults = query.runSuiteQL({ query: sqlShipment }).asMappedResults();
+                    shipmentResults.forEach(r => {
+                        shipmentByPoId[r.po_id] = {
+                            id: r.shipment_id,
+                            number: r.shipment_number
+                        };
+                    });
+                } catch (e) {
+                    log.error('Inbound Shipment Query Error', e.message);
+                }
+            }
+
             // ── Search Custom Attach Files ────────────────────────────────────
             // Pola sama seperti msi_get_transfer_orders.js / msi_get_item_fulfillments.js
             let filesByReceipt = {};
@@ -384,6 +421,9 @@ define(['N/search', 'N/record', 'N/log'], (search, record, log) => {
                 header.lines = linesByReceipt[header.receipt_id] || [];
                 header.files = filesByReceipt[String(header.receipt_id)] || [];
                 header.user_notes = notesByReceipt[header.receipt_id] || [];
+                let shipmentData = shipmentByPoId[header.createdfrom] || null;
+                header.inboundshipment = shipmentData ? shipmentData.id : null;
+                header.inboundshipment_display = shipmentData ? shipmentData.number : null;
                 return header;
             });
 
