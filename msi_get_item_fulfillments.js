@@ -17,6 +17,7 @@
     "lastmodified":  "2026-03-31T23:59:00+07:00", // Filter tanggal diubah (opsional)
     "vendor_id":     10,             // Filter by vendor/entity ID (opsional)
     "createdfrom":   5157,           // Filter by created from PO ID (opsional)
+    "source_type":   "sales_order",  // "sales_order" | "transfer_order" | "vendor_return" (opsional)
     "trandate_from": "2026-01-01",   // Filter tanggal transaksi dari (opsional)
     "trandate_to":   "2026-06-30",   // Filter tanggal transaksi sampai (opsional)
     "subsidiary_id": 1               // Filter by subsidiary (opsional)
@@ -157,6 +158,28 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 searchFilters.push('AND', ['createdfrom.internalid', 'anyof', filtersBody.createdfrom]);
             }
 
+            // source_type: pola sama seperti msi_get_item_receipts.js — Item Fulfillment
+            // umumnya dibuat dari Sales Order, tapi bisa juga dari Transfer Order (kirim
+            // antar lokasi) atau Vendor Return Authorization (kirim balik barang ke vendor).
+            const sourceTypeMap = {
+                'sales_order':    'SalesOrd',
+                'transfer_order': 'TrnfrOrd',
+                'vendor_return':  'VendAuth'
+            };
+            const sourceTypeMapReverse = {
+                'SalesOrd': 'sales_order',
+                'TrnfrOrd': 'transfer_order',
+                'VendAuth': 'vendor_return'
+            };
+
+            if (filtersBody.source_type) {
+                let sourceTypeId = sourceTypeMap[filtersBody.source_type];
+                if (!sourceTypeId) {
+                    throw new Error("filters.source_type tidak valid. Gunakan: 'sales_order', 'transfer_order', atau 'vendor_return'.");
+                }
+                searchFilters.push('AND', ['createdfrom.type', 'anyof', sourceTypeId]);
+            }
+
             if (filtersBody.trandate_from) {
                 var dFrom = new Date(filtersBody.trandate_from);
                 var nsDateFrom = dFrom.getDate() + '/' + (dFrom.getMonth() + 1) + '/' + dFrom.getFullYear();
@@ -193,7 +216,8 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 'custbody_me_total_packages',
                 'subsidiary', 'subsidiarynohierarchy',
                 'location', 'transferlocation', 'department', 'class',
-                'datecreated'
+                'datecreated',
+                search.createColumn({ name: 'type', join: 'createdfrom' })
             ];
 
             if (sortColumn === 'lastmodifieddate') {
@@ -275,6 +299,8 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     entity_name: res.getText('entity'),
                     createdfrom_id: res.getValue('createdfrom'),
                     createdfrom_number: res.getText('createdfrom'),
+                    source_type: sourceTypeMapReverse[res.getValue({ name: 'type', join: 'createdfrom' })] || null,
+                    source_type_display: res.getText({ name: 'type', join: 'createdfrom' }),
                     postingperiod: res.getText('postingperiod'),
                     last_modified: formatToISO(res.getValue('lastmodifieddate')),
                     created_by: res.getText('custbody_me_wf_created_by'),
