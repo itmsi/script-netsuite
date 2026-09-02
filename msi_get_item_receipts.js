@@ -418,7 +418,82 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
 
             // ── Gabungkan header + lines + files + notes ──────────────────────────
             let data = pagedHeaders.map(header => {
-                header.lines = linesByReceipt[header.receipt_id] || [];
+                let rawLines = linesByReceipt[header.receipt_id] || [];
+                const isTransfer = header.source_type === 'transfer_order';
+
+                // ── Ciutkan baris "phantom"/cermin bawaan NetSuite ─────────────
+                // Item Receipt yang dibuat dari Transfer Order bisa menyimpan
+                // 2 sub-row di transactionline untuk 1 baris item UI:
+                //   +qty di lokasi TUJUAN (transferlocation) dan
+                //   -qty di lokasi ASAL (location) — pola sama seperti
+                //   msi_get_item_fulfillments.js / msi_get_transfer_orders.js.
+                // Baris cermin selalu ber-qty NEGATIF. Dedupe aman:
+                //   - grup mengandung baris negatif → collapse per |qty| unik,
+                //     pilih SATU wakil (prefer qty positif → baris pertama);
+                //   - grup semua positif → baris asli berbeda → pertahankan semua
+                //     (kecuali khas TO: duplikat +q/+q tanpa baris negatif).
+                // Untuk TO, lokasi sengaja diabaikan saat grouping karena baris
+                // cermin negatif tercatat di lokasi asal yang berbeda.
+                let lines = rawLines;
+                if (lines.length > 1) {
+                    const groupMap = {};
+                    const groupOrder = [];
+                    lines.forEach(l => {
+                        const gk = isTransfer
+                            ? [l.item, l.department, l.class].join('|')
+                            : [l.item, l.location, l.department, l.class].join('|');
+                        if (!groupMap[gk]) { groupMap[gk] = []; groupOrder.push(gk); }
+                        groupMap[gk].push(l);
+                    });
+
+                    const collapsed = [];
+                    groupOrder.forEach(gk => {
+                        const group = groupMap[gk];
+                        if (group.length === 1) { collapsed.push(group[0]); return; }
+
+                        const negCount = group.filter(l => Number(l.quantity) < 0).length;
+                        const absQtySet = {};
+                        group.forEach(l => { absQtySet[Math.abs(Number(l.quantity))] = true; });
+                        const duplicateAbs = Object.keys(absQtySet).length < group.length;
+
+                        // Baris positif semua & bukan duplikat absolut khas TO →
+                        // baris asli yang berbeda → pertahankan semua.
+                        if (negCount === 0 && !(isTransfer && duplicateAbs)) {
+                            group.forEach(l => collapsed.push(l));
+                            return;
+                        }
+
+                        // Ada baris cermin/negatif (atau duplikat absolut TO):
+                        // pilih SATU wakil per |qty| unik. Prefer qty positif
+                        // (baris penerimaan di lokasi tujuan), lalu baris
+                        // dengan nomor line terkecil.
+                        const byAbs = {};
+                        const absOrder = [];
+                        group.forEach(l => {
+                            const a = Math.abs(Number(l.quantity));
+                            const prev = byAbs[a];
+                            if (!prev) { byAbs[a] = l; absOrder.push(a); return; }
+                            const prevQty = Number(prev.quantity) || 0;
+                            const qty = Number(l.quantity) || 0;
+                            let best = prev;
+                            if (prevQty < 0 && qty > 0) best = l;          // l positif, prev negatif
+                            else if (prevQty > 0 && qty < 0) best = prev; // prev positif, l negatif
+                            else if (Number(l.line) < Number(prev.line)) best = l;
+                            byAbs[a] = best;
+                        });
+                        absOrder.forEach(a => collapsed.push(byAbs[a]));
+                    });
+
+                    // Urutkan sesuai nomor line asli agar sesuai urutan UI
+                    collapsed.sort((a, b) => Number(a.line) - Number(b.line));
+                    lines = collapsed;
+
+                    if (rawLines.length > 0 && lines.length !== rawLines.length) {
+                        log.audit('IR Line Dedupe', `IR ${header.receipt_id} (${header.source_type}): ${rawLines.length} search line -> ${lines.length} line`);
+                    }
+                }
+
+                header.lines = lines;
                 header.files = filesByReceipt[String(header.receipt_id)] || [];
                 header.user_notes = notesByReceipt[header.receipt_id] || [];
                 let shipmentData = shipmentByPoId[header.createdfrom] || null;
