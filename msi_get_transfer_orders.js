@@ -142,6 +142,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 search.createColumn({ name: 'class' }),
                 search.createColumn({ name: 'custbody_me_inv_customer' }),      // Customer
                 search.createColumn({ name: 'custbody_msi_createdby_api' }),
+                search.createColumn({ name: 'createdby' }),                     // Created By (NetSuite native)
                 search.createColumn({ name: 'amount' }),                        // Summary Total
                 search.createColumn({ name: 'customform' })
             ];
@@ -189,6 +190,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 var departmentId = r.getValue('department');
                 var classId = r.getValue('class');
                 var customerId = r.getValue('custbody_me_inv_customer');
+                var createdById = r.getValue('createdby');
 
                 map[String(r.id)] = {
                     id: String(r.id),
@@ -217,6 +219,8 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                     customer_id: customerId ? Number(customerId) : null,
                     customer_name: r.getText('custbody_me_inv_customer') || null,
                     custbody_msi_createdby_api: r.getValue('custbody_msi_createdby_api'),
+                    created_by_id: createdById ? Number(createdById) : null,
+                    created_by_name: r.getText('createdby') || null,
                     use_item_cost_as_transfer_cost: false, // di-isi dari SuiteQL, lihat blok di bawah
                     total: (function (v) { return v !== null && v !== '' ? Math.abs(Number(v)) : 0; })(r.getValue('amount')),
                     customform: r.getValue('customform') ? Number(r.getValue('customform')) : null,

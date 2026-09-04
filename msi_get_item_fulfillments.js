@@ -216,7 +216,7 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 'custbody_me_total_packages',
                 'subsidiary', 'subsidiarynohierarchy',
                 'location', 'transferlocation', 'department', 'class',
-                'datecreated',
+                'datecreated', 'incoterm', 'currency',
                 search.createColumn({ name: 'type', join: 'createdfrom' })
             ];
 
@@ -331,7 +331,11 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     department_display: res.getText('department'),
                     class: res.getValue('class'),
                     class_display: res.getText('class'),
-                    datecreated: formatToISO(res.getValue('datecreated'))
+                    datecreated: formatToISO(res.getValue('datecreated')),
+                    incoterm_id: res.getValue('incoterm'),
+                    incoterm_name: res.getText('incoterm') || null,
+                    currency: res.getValue('currency'),
+                    currency_display: res.getText('currency')
                 });
             });
 
@@ -350,7 +354,7 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     columns: [
                         'internalid', 'line', 'lineuniquekey',
                         'item', 'itemtype', 'memo',
-                        'quantity',
+                        'quantity', 'rate',
                         'location', 'department', 'class'
                     ]
                 });
@@ -368,6 +372,11 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                         itemtype: res.getValue('itemtype'),
                         memo: res.getValue('memo'),
                         quantity: Number(res.getValue('quantity')),
+                        rate: res.getValue('rate') ? Number(res.getValue('rate')) : 0,
+                        // currency diisi belakangan dari header (field header,
+                        // bukan per-line) — lihat blok penggabungan header+lines.
+                        currency: null,
+                        currency_display: null,
                         // units diisi belakangan: prioritas dari record sublist
                         // 'item' (unitsByLineKey), lalu fallback base unit item
                         // master — kolom unit tidak dijamin valid di saved search
@@ -849,6 +858,13 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
 
                     const invKey = `${header.id}_${rawSeq}`;
                     line.inventory_detail = inventoryByLineKey[invKey] || [];
+
+                    // Currency bukan field per-line di Item Fulfillment,
+                    // tapi field header transaksi — dipasang ke tiap baris
+                    // supaya UI (khusus tipe vendor_return) bisa tampilkan
+                    // kolom Rate + Currency langsung dari data line.
+                    line.currency = header.currency;
+                    line.currency_display = header.currency_display;
                 });
 
                 if (rawLines.length > 0 && lines.length !== rawLines.length) {

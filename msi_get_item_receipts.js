@@ -122,6 +122,10 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                 searchFilters.push('AND', ['internalid', 'anyof', filtersBody.receipt_ids]);
             }
 
+            if (filtersBody.internalid && Array.isArray(filtersBody.internalid) && filtersBody.internalid.length > 0) {
+                searchFilters.push('AND', ['internalid', 'anyof', filtersBody.internalid]);
+            }
+
             if (filtersBody.tranid) {
                 searchFilters.push('AND', ['tranid', 'contains', filtersBody.tranid.trim()]);
             }
@@ -159,7 +163,8 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                     search.createColumn({ name: searchSortCol, sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
                     'internalid', 'tranid', 'trandate', 'status', 'memo', 'entity',
                     'createdfrom', 'lastmodifieddate', 'datecreated',
-                    'location', 'subsidiarynohierarchy', 'department', 'class',
+                    'location', 'transferlocation', 'subsidiarynohierarchy', 'department', 'class',
+                    'postingperiod', 'incoterm', 'currency', 'exchangerate',
                     search.createColumn({ name: 'type', join: 'createdfrom' })
                 ]
             });
@@ -203,10 +208,18 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                     subsidiary_display:   res.getText('subsidiarynohierarchy'),
                     location:             res.getValue('location'),
                     location_display:     res.getText('location'),
+                    transferlocation:         res.getValue('transferlocation'),
+                    transferlocation_display: res.getText('transferlocation'),
                     department:           res.getValue('department'),
                     department_display:   res.getText('department'),
                     class:                res.getValue('class'),
                     class_display:        res.getText('class'),
+                    postingperiod:        res.getText('postingperiod'),
+                    incoterm_id:          res.getValue('incoterm'),
+                    incoterm_name:        res.getText('incoterm') || null,
+                    currency:             res.getValue('currency'),
+                    currency_display:     res.getText('currency'),
+                    exchangerate:         res.getValue('exchangerate'),
                     last_modified:        formatToISO(res.getValue('lastmodifieddate')),
                     datecreated:          formatToISO(res.getValue('datecreated'))
                 });
@@ -264,8 +277,9 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                     columns: [
                         search.createColumn({ name: 'internalid', sort: search.Sort.ASC }),
                         search.createColumn({ name: 'line', sort: search.Sort.ASC }),
-                        'item', 'quantity', 'rate', 'amount', 'memo',
-                        'location', 'department', 'class',
+                        'lineuniquekey', 'item', 'itemtype', 'quantity', 'rate', 'amount', 'memo',
+                        'location', 'department', 'class', 'restock',
+                        'custcol_me_landed_cost',
                         search.createColumn({ name: 'inventorynumber', join: 'inventoryDetail' })
                     ]
                 });
@@ -277,19 +291,32 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
 
                     linesByReceipt[receiptId].push({
                         line:               res.getValue('line'),
+                        line_id:            res.getValue('lineuniquekey'),
                         item:               res.getValue('item'),
                         item_display:       res.getText('item'),
+                        itemtype:           res.getValue('itemtype'),
                         description:        descriptionMap[receiptId] && descriptionMap[receiptId][lineNum] ? descriptionMap[receiptId][lineNum] : '',
                         quantity:           res.getValue('quantity'),
                         rate:               res.getValue('rate'),
                         amount:             res.getValue('amount'),
                         memo:               res.getValue('memo'),
+                        // on_hand diisi belakangan via inventory lookup per
+                        // (item + lokasi) — sama seperti msi_get_item_fulfillments.js.
+                        on_hand:            null,
                         location:           res.getValue('location'),
                         location_display:   res.getText('location'),
                         department:         res.getValue('department'),
                         department_display: res.getText('department'),
                         class:              res.getValue('class'),
                         class_display:      res.getText('class'),
+                        restock:            res.getValue('restock'),
+                        landed_cost:        res.getValue('custcol_me_landed_cost'),
+                        // currency & project segmentation diisi belakangan
+                        // (lihat blok penggabungan header+lines).
+                        currency:           null,
+                        currency_display:   null,
+                        cseg_msi_pro_segmen: null,
+                        cseg_msi_pro_segmen_display: null,
                         inventorydetail:    res.getText({ name: 'inventorynumber', join: 'inventoryDetail' })
                     });
                     return true;
@@ -328,6 +355,93 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                     });
                 } catch (e) {
                     log.error('Inbound Shipment Query Error', e.message);
+                }
+            }
+
+            // ── On Hand per Line (qty di lokasi baris) ──────────────────────
+            // Pola sama seperti msi_get_item_fulfillments.js: on hand cuma relevan
+            // untuk item inventory (InvtPart/Serialized/Lot) dan bersifat per-lokasi.
+            let onHandByItemLoc = {};
+            if (Object.keys(linesByReceipt).length > 0) {
+                const itemTypeToSearchType = (t) => {
+                    switch (t) {
+                        case 'InvtPart':   return search.Type.INVENTORY_ITEM;
+                        case 'Serialized': return search.Type.SERIALIZED_INVENTORY_ITEM;
+                        case 'Lot':        return search.Type.LOT_NUMBERED_INVENTORY_ITEM;
+                        default:           return null;
+                    }
+                };
+
+                const typeItems = {};
+                Object.keys(linesByReceipt).forEach(receiptId => {
+                    linesByReceipt[receiptId].forEach(l => {
+                        const st = itemTypeToSearchType(l.itemtype);
+                        if (!st || !l.item || l.location === null || l.location === undefined || l.location === '') return;
+                        if (!typeItems[st]) typeItems[st] = { items: {}, locations: {} };
+                        typeItems[st].items[String(l.item)] = true;
+                        typeItems[st].locations[String(l.location)] = true;
+                    });
+                });
+
+                Object.keys(typeItems).forEach(st => {
+                    const itemIds = Object.keys(typeItems[st].items);
+                    const locationIds = Object.keys(typeItems[st].locations);
+                    if (itemIds.length === 0 || locationIds.length === 0) return;
+                    try {
+                        const invSearch = search.create({
+                            type: st,
+                            filters: [
+                                ['internalid', 'anyof', itemIds],
+                                'AND',
+                                ['inventorylocation', 'anyof', locationIds]
+                            ],
+                            columns: [
+                                search.createColumn({ name: 'internalid' }),
+                                search.createColumn({ name: 'locationquantityonhand' }),
+                                search.createColumn({ name: 'inventorylocation' })
+                            ]
+                        });
+                        invSearch.run().each(r => {
+                            const key = String(r.id) + '_' + String(r.getValue('inventorylocation'));
+                            const oh = r.getValue('locationquantityonhand');
+                            onHandByItemLoc[key] =
+                                (oh !== null && oh !== undefined && oh !== '') ? Number(oh) : null;
+                            return true;
+                        });
+                    } catch (e) {
+                        log.error('On Hand Search Error (' + st + ')', e.message);
+                    }
+                });
+            }
+
+            // ── Custom Segment "Project Segmentation" per-line via SuiteQL ────
+            // N/search (search.Type.ITEM_RECEIPT) tidak bisa resolve field custom
+            // segment ini sebagai kolom biasa (selalu invalid) — pola sama seperti
+            // msi_get_purchase_orders.js: query TransactionLine langsung via SuiteQL,
+            // di-map per lineuniquekey.
+            let lineSegmentMap = {};
+            if (foundReceiptIds.length > 0) {
+                try {
+                    let sqlSegment = `
+                        SELECT
+                            tl.uniquekey as line_uniquekey,
+                            tl.cseg_msi_pro_segmen as segment_id,
+                            BUILTIN.DF(tl.cseg_msi_pro_segmen) as segment_name
+                        FROM
+                            TransactionLine tl
+                        WHERE
+                            tl.transaction IN (${foundReceiptIds.join(',')})
+                            AND tl.mainline = 'F'
+                    `;
+                    let segmentResults = query.runSuiteQL({ query: sqlSegment }).asMappedResults();
+                    segmentResults.forEach(r => {
+                        lineSegmentMap[r.line_uniquekey] = {
+                            id: r.segment_id,
+                            name: r.segment_name
+                        };
+                    });
+                } catch (e) {
+                    log.error('Project Segmentation Query Error', e.message);
                 }
             }
 
@@ -492,6 +606,26 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                         log.audit('IR Line Dedupe', `IR ${header.receipt_id} (${header.source_type}): ${rawLines.length} search line -> ${lines.length} line`);
                     }
                 }
+
+                // Lengkapi tiap line: on_hand (per item+lokasi), currency
+                // (field header, bukan per-line — sama seperti msi_get_item_fulfillments.js),
+                // dan custom segment Project Segmentation (per lineuniquekey).
+                lines.forEach(line => {
+                    const itemLocKey = (line.item && line.location !== null && line.location !== undefined && line.location !== '')
+                        ? String(line.item) + '_' + String(line.location)
+                        : '';
+                    const ohData = itemLocKey ? onHandByItemLoc[itemLocKey] : null;
+                    if (ohData !== null && ohData !== undefined) {
+                        line.on_hand = ohData;
+                    }
+
+                    line.currency = header.currency;
+                    line.currency_display = header.currency_display;
+
+                    const segmentData = lineSegmentMap[line.line_id] || null;
+                    line.cseg_msi_pro_segmen = segmentData ? segmentData.id : null;
+                    line.cseg_msi_pro_segmen_display = segmentData ? segmentData.name : null;
+                });
 
                 header.lines = lines;
                 header.files = filesByReceipt[String(header.receipt_id)] || [];
