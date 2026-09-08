@@ -308,7 +308,8 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         }),
                         'grossamount', 'taxcode', 'memo',
                         'location', 'department', 'class',
-                        'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost'
+                        'matchbilltoreceipt', 'expectedreceiptdate', 'custcol_4601_witaxapplies', 'custcol_msi_fob', 'custcol_me_landed_cost',
+                        search.createColumn({ name: 'displayname', join: 'item' })
                     ]
                 });
 
@@ -343,6 +344,7 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                         line_id: res.getValue('lineuniquekey'),
                         item: res.getValue('item'),
                         item_display: res.getText('item'),
+                        item_displayname:   res.getValue({ name: 'displayname', join: 'item' }) || null,
                         itemtype: res.getValue('itemtype'),
                         quantity: quantity,
                         quantitybilled: res.getValue('quantitybilled'),
