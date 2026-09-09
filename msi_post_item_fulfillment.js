@@ -49,6 +49,31 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 fulfillment.setValue({ fieldId: 'customform', value: context.customform });
             }
 
+            // PENTING: jangan pakai new Date(string) untuk string "YYYY-MM-DD" -
+            // itu diparse sebagai UTC midnight, lalu NetSuite convert ke timezone
+            // akun (biasanya mundur dari UTC) sehingga tanggalnya jadi mundur 1 hari.
+            // Makanya parsing manual ke komponen local date (y, m-1, d) diprioritaskan.
+            if (context.trandate) {
+                try {
+                    var d;
+                    var dateParts = String(context.trandate).split(/[-\/]/);
+                    if (dateParts.length === 3) {
+                        d = dateParts[0].length === 4
+                            ? new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2])   // YYYY-MM-DD
+                            : new Date(+dateParts[2], +dateParts[1] - 1, +dateParts[0]);  // DD-MM-YYYY
+                    } else {
+                        d = new Date(context.trandate);
+                    }
+                    if (d && !isNaN(d.getTime())) {
+                        fulfillment.setValue({ fieldId: 'trandate', value: d });
+                    } else {
+                        log.error('SET TRANDATE ERROR', 'Format trandate tidak valid: ' + context.trandate);
+                    }
+                } catch (dateErr) {
+                    log.error('SET TRANDATE ERROR', dateErr.message);
+                }
+            }
+
             // 🔥 (BARU) Auto-map semua custom fields dari body ke header Item Fulfillment
             for (var key in context) {
                 if (key.indexOf('custbody') === 0) {
