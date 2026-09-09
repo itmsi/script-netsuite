@@ -280,7 +280,7 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                         'lineuniquekey', 'item', 'itemtype', 'quantity', 'rate', 'amount', 'memo',
                         'location', 'department', 'class', 'restock',
                         'custcol_me_landed_cost',
-                        search.createColumn({ name: 'inventorynumber', join: 'inventoryDetail' })
+                        search.createColumn({ name: 'inventorynumber', join: 'inventoryDetail' }), search.createColumn({ name: 'displayname', join: 'item' })
                     ]
                 });
 
@@ -294,6 +294,7 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                         line_id:            res.getValue('lineuniquekey'),
                         item:               res.getValue('item'),
                         item_display:       res.getText('item'),
+                        item_displayname:   res.getValue({ name: 'displayname', join: 'item' }),
                         itemtype:           res.getValue('itemtype'),
                         description:        descriptionMap[receiptId] && descriptionMap[receiptId][lineNum] ? descriptionMap[receiptId][lineNum] : '',
                         quantity:           res.getValue('quantity'),
