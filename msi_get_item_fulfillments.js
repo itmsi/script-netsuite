@@ -349,13 +349,17 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                         'AND',
                         ['mainline', 'is', 'F'],
                         'AND',
+                        ['accounttype', 'anyof', 'COGS'],
+                        'AND',
+                        ['taxline', 'is', 'F'],
+                        'AND',
                         ['shipping', 'is', 'F']
                     ],
                     columns: [
                         'internalid', 'line', 'lineuniquekey',
                         'item', 'itemtype', 'memo',
                         'quantity', 'rate',
-                        'location', 'department', 'class'
+                        'location', 'department', 'class', search.createColumn({ name: 'displayname', join: 'item' })
                     ]
                 });
 
@@ -369,6 +373,7 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                         line_id: res.getValue('lineuniquekey'),
                         item: res.getValue('item'),
                         item_display: res.getText('item'),
+                        item_displayname: res.getValue({ name: 'displayname', join: 'item' }),
                         itemtype: res.getValue('itemtype'),
                         memo: res.getValue('memo'),
                         quantity: Number(res.getValue('quantity')),
@@ -397,21 +402,12 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 });
             }
 
-            // ── Ambil Units & field line via N/record ────────────────────────
-            // Sekaligus kumpulkan baris yang benar-benar tampil di record
-            // sublist 'item' (= baris asli yang terlihat di UI), dalam 2 bentuk:
-            //   recordLineKeysByIf[ifId]  → lineuniquekey (String)
-            //   recordLineNumsByIf[ifId]  → nomor line tersimpan (Number)
-            // Baris internal/phantom — mis. IF hasil fulfill Transfer Order,
-            // di mana 1 baris UI tersimpan s.d. 3 sub-row di transactionline
-            // (+qty / -qty / +qty, pola sama seperti msi_get_transfer_orders.js) —
-            // dipakai sebagai acuan untuk membuang baris duplikat dari hasil
-            // saved search. Dua bentuk dicatat karena domain nilai antara
-            // hasil search vs record API bisa saja berbeda.
+            // ── Ambil Units per baris via N/record ────────────────────────────
+            // Kolom unit tidak dijamin valid di saved search ITEM_FULFILLMENT,
+            // jadi diambil dari record sublist 'item', di-key per lineuniquekey
+            // supaya bisa di-lookup pas gabung dengan hasil lineSearch di atas.
             let unitsByLineKey = {};
             let unitsDisplayByLineKey = {};
-            let recordLineKeysByIf = {};
-            let recordLineNumsByIf = {};
             if (foundIfIds.length > 0) {
                 foundIfIds.forEach(ifId => {
                     try {
@@ -422,38 +418,24 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
 
                         let lineCount = ifRecord.getLineCount({ sublistId: 'item' });
                         for (let i = 0; i < lineCount; i++) {
-                            let lineNum = ifRecord.getSublistValue({
-                                sublistId: 'item',
-                                fieldId: 'line',
-                                line: i
-                            });
                             let lineUniqueKey = ifRecord.getSublistValue({
                                 sublistId: 'item',
                                 fieldId: 'lineuniquekey',
                                 line: i
                             });
-                            if (!recordLineNumsByIf[ifId]) recordLineNumsByIf[ifId] = [];
-                            if (lineNum !== null && lineNum !== undefined && lineNum !== '') {
-                                recordLineNumsByIf[ifId].push(Number(lineNum));
-                            }
-                            if (lineUniqueKey) {
-                                if (!recordLineKeysByIf[ifId]) recordLineKeysByIf[ifId] = [];
-                                recordLineKeysByIf[ifId].push(String(lineUniqueKey));
-                                // Simpan key sebagai String agar konsisten dengan
-                                // line_id dari saved search (sebelumnya key Number
-                                // vs lookup String → units selalu null).
-                                const lk = String(lineUniqueKey);
-                                unitsByLineKey[lk] = ifRecord.getSublistValue({
-                                    sublistId: 'item',
-                                    fieldId: 'units',
-                                    line: i
-                                }) || null;
-                                unitsDisplayByLineKey[lk] = ifRecord.getSublistText({
-                                    sublistId: 'item',
-                                    fieldId: 'units',
-                                    line: i
-                                }) || null;
-                            }
+                            if (!lineUniqueKey) continue;
+
+                            const lk = String(lineUniqueKey);
+                            unitsByLineKey[lk] = ifRecord.getSublistValue({
+                                sublistId: 'item',
+                                fieldId: 'units',
+                                line: i
+                            }) || null;
+                            unitsDisplayByLineKey[lk] = ifRecord.getSublistText({
+                                sublistId: 'item',
+                                fieldId: 'units',
+                                line: i
+                            }) || null;
                         }
                     } catch (e) {
                         log.error('Record Load Error for IF ' + ifId, e.message);
@@ -731,12 +713,12 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
             // ── Gabungkan header + lines + inventory + notes + files ───────────
             let data = pagedHeaders.map(header => {
                 let rawLines = linesByIf[header.id] || [];
-                const recKeys = recordLineKeysByIf[header.id] || [];
-                const recLineNums = recordLineNumsByIf[header.id] || [];
-                const isTransfer = header.source_type === 'transfer_order';
 
-                // ── Langkah 1: buang duplikat eksak (jaga-jaga, seharusnya
-                // lineuniquekey hasil search unik per baris).
+                // Filter lineSearch di atas (mainline F + accounttype COGS +
+                // taxline F + shipping F) sudah membuang baris tax/shipping/
+                // cermin non-COGS, jadi hasilnya sudah 1 baris per baris UI —
+                // dedupe by line_id di sini cuma jaga-jaga (harusnya
+                // lineuniquekey sudah unik per baris).
                 const seenLineId = {};
                 let lines = [];
                 rawLines.forEach(l => {
@@ -744,83 +726,10 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     if (!seenLineId[k]) { seenLineId[k] = true; lines.push(l); }
                 });
 
-                // ── Langkah 2: ciutkan baris "phantom"/cermin bawaan NetSuite.
-                // Di transactionline, 1 baris item UI bisa tersimpan 2-3 sub-row:
-                // pasangan +/- ber-|qty| sama (mis. +7/-7), atau +q/-q/+q (khas
-                // Transfer Order, pola sama seperti msi_get_transfer_orders.js).
-                // Baris cermin selalu disertai baris qty NEGATIF. Dedupe aman:
-                //   - grup mengandung baris negatif → collapse per |qty| unik,
-                //     satu baris wakil per |qty| (prefer qty positif > cocok
-                //     record sublist > qty absolut terbesar > line terkecil).
-                //   - grup semua positif → baris asli berbeda → pertahankan semua
-                //     (kecuali khas TO: duplikat +q/+q tanpa baris negatif).
-                if (lines.length > 1) {
-                    const groupMap = {};
-                    const groupOrder = [];
-                    lines.forEach(l => {
-                        const gk = isTransfer
-                            ? [l.item, l.department, l.class].join('|')
-                            : [l.item, l.location, l.department, l.class].join('|');
-                        if (!groupMap[gk]) { groupMap[gk] = []; groupOrder.push(gk); }
-                        groupMap[gk].push(l);
-                    });
-
-                    const recKeySet = {};
-                    recKeys.forEach(k => { recKeySet[String(k)] = true; });
-                    const recLineSet = {};
-                    recLineNums.forEach(n => { recLineSet[Number(n)] = true; });
-                    const inRec = l => recKeySet[String(l.line_id)] || recLineSet[Number(l.linesequencenumber)];
-
-                    // pilih wakil terbaik di antara dua baris
-                    const pickBest = (a, b) => {
-                        const aQty = Number(a.quantity) || 0;
-                        const bQty = Number(b.quantity) || 0;
-                        const aPos = aQty > 0, bPos = bQty > 0;
-                        if (aPos && !bPos) return a;
-                        if (!aPos && bPos) return b;
-                        const aRec = inRec(a), bRec = inRec(b);
-                        if (aRec && !bRec) return a;
-                        if (!aRec && bRec) return b;
-                        if (Math.abs(aQty) > Math.abs(bQty)) return a;
-                        if (Math.abs(aQty) < Math.abs(bQty)) return b;
-                        return Number(a.linesequencenumber) <= Number(b.linesequencenumber) ? a : b;
-                    };
-
-                    const collapsed = [];
-                    groupOrder.forEach(gk => {
-                        const group = groupMap[gk];
-                        if (group.length === 1) { collapsed.push(group[0]); return; }
-
-                        const negCount = group.filter(l => Number(l.quantity) < 0).length;
-                        const absQtySet = {};
-                        group.forEach(l => { absQtySet[Math.abs(Number(l.quantity))] = true; });
-                        const duplicateAbs = Object.keys(absQtySet).length < group.length;
-
-                        // Grup semua positif & bukan duplikat absolut khas TO →
-                        // baris asli yang berbeda → pertahankan semua.
-                        if (negCount === 0 && !(isTransfer && duplicateAbs)) {
-                            group.forEach(l => collapsed.push(l));
-                            return;
-                        }
-
-                        // Ada baris cermin/negatif (atau duplikat absolut TO):
-                        // pilih SATU wakil per |qty| unik.
-                        const byAbs = {};
-                        const absOrder = [];
-                        group.forEach(l => {
-                            const a = Math.abs(Number(l.quantity));
-                            if (!byAbs[a]) { byAbs[a] = l; absOrder.push(a); }
-                            else byAbs[a] = pickBest(byAbs[a], l);
-                        });
-                        absOrder.forEach(a => collapsed.push(byAbs[a]));
-                    });
-                    lines = collapsed;
-                }
-
-                // ── Langkah 3: urutkan & beri nomor berurutan 1..N sesuai
-                // urutan UI, lalu map units & inventory detail per baris.
-                // Key inventory detail memakai nomor baris ASLI di
-                // transactionline (diambil sebelum renumber).
+                // ── Urutkan & beri nomor berurutan 1..N sesuai urutan UI,
+                // lalu map units & inventory detail per baris. Key inventory
+                // detail memakai nomor baris ASLI di transactionline (diambil
+                // sebelum renumber).
                 lines.sort((a, b) => a.linesequencenumber - b.linesequencenumber);
                 lines.forEach((line, idx) => {
                     const rawSeq = line.linesequencenumber;
