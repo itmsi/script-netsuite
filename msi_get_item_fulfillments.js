@@ -340,30 +340,33 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
             });
 
             // ── Search Line Items ─────────────────────────────────────────────
+            // Filter accounttype=COGS cuma valid utk IF yang baris
+            // fulfillment-nya memang posting ke akun COGS (Sales Order /
+            // Vendor Return). IF dari Transfer Order TIDAK pernah menyentuh
+            // akun COGS (transfer antar lokasi, bukan penjualan) — kalau
+            // filter ini tetap dipasang, baris TO jadi kosong semua. Jadi
+            // query line-nya dipisah 2: IF non-TO (pakai accounttype COGS)
+            // dan IF Transfer Order (tanpa accounttype).
             let linesByIf = {};
             if (foundIfIds.length > 0) {
-                let lineSearch = search.create({
-                    type: search.Type.ITEM_FULFILLMENT,
-                    filters: [
-                        ['internalid', 'anyof', foundIfIds],
-                        'AND',
-                        ['mainline', 'is', 'F'],
-                        'AND',
-                        ['accounttype', 'anyof', 'COGS'],
-                        'AND',
-                        ['taxline', 'is', 'F'],
-                        'AND',
-                        ['shipping', 'is', 'F']
-                    ],
-                    columns: [
-                        'internalid', 'line', 'lineuniquekey',
-                        'item', 'itemtype', 'memo',
-                        'quantity', 'rate',
-                        'location', 'department', 'class', search.createColumn({ name: 'displayname', join: 'item' })
-                    ]
-                });
+                const transferOrderIfIds = pagedHeaders
+                    .filter(h => h.source_type === 'transfer_order')
+                    .map(h => h.id);
+                const salesOrderIfIds = pagedHeaders
+                    .filter(h => h.source_type === 'sales_order')
+                    .map(h => h.id);
+                const otherIfIds = foundIfIds.filter(id =>
+                    transferOrderIfIds.indexOf(id) === -1 && salesOrderIfIds.indexOf(id) === -1
+                );
 
-                fetchSearchResults(lineSearch, res => {
+                const lineColumns = [
+                    'internalid', 'line', 'lineuniquekey',
+                    'item', 'itemtype', 'memo',
+                    'quantity', 'rate',
+                    'location', 'department', 'class', search.createColumn({ name: 'displayname', join: 'item' })
+                ];
+
+                const pushLine = res => {
                     let ifId = res.getValue('internalid');
                     if (!linesByIf[ifId]) linesByIf[ifId] = [];
 
@@ -399,7 +402,44 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                         class_display: res.getText('class')
                     });
                     return true;
-                });
+                };
+
+                const runLineSearch = (ids, filters) => {
+                    if (ids.length === 0) return;
+                    let lineSearch = search.create({
+                        type: search.Type.ITEM_FULFILLMENT,
+                        filters: [['internalid', 'anyof', ids], 'AND', ['mainline', 'is', 'F']].concat(filters),
+                        columns: lineColumns
+                    });
+                    fetchSearchResults(lineSearch, pushLine);
+                };
+
+                // Sales Order: baris fulfillment yang posting ke akun COGS,
+                // dipersempit lagi ke IF yang benar-benar dibuat dari Sales
+                // Order (createdfrom.type).
+                runLineSearch(salesOrderIfIds, [
+                    'AND', ['accounttype', 'anyof', 'COGS'],
+                    'AND', ['taxline', 'is', 'F'],
+                    'AND', ['shipping', 'is', 'F'],
+                    'AND', ['createdfrom.type', 'anyof', 'SalesOrd']
+                ]);
+
+                // Non-TO lainnya (Vendor Return, dll): baris fulfillment yang
+                // posting ke akun COGS, tanpa pembatasan createdfrom.type.
+                runLineSearch(otherIfIds, [
+                    'AND', ['accounttype', 'anyof', 'COGS'],
+                    'AND', ['taxline', 'is', 'F'],
+                    'AND', ['shipping', 'is', 'F']
+                ]);
+
+                // Transfer Order: field 'accounttype'/'taxline'/'shipping' di
+                // atas tidak berlaku sama sekali (TO tidak menyentuh akun
+                // COGS) — dipakai kombinasi qty >= 0 (buang baris cermin
+                // negatif) + flag 'cogs' checkbox di transactionline.
+                runLineSearch(transferOrderIfIds, [
+                    'AND', ['formulanumeric: {quantity}', 'greaterthanorequalto', '0'],
+                    'AND', ['cogs', 'is', 'T']
+                ]);
             }
 
             // ── Ambil Units per baris via N/record ────────────────────────────
