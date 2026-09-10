@@ -165,7 +165,8 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                     'createdfrom', 'lastmodifieddate', 'datecreated',
                     'location', 'transferlocation', 'subsidiarynohierarchy', 'department', 'class',
                     'postingperiod', 'incoterm', 'currency', 'exchangerate',
-                    search.createColumn({ name: 'type', join: 'createdfrom' })
+                    search.createColumn({ name: 'type', join: 'createdfrom' }), 
+                    'createdby'
                 ]
             });
 
@@ -221,7 +222,9 @@ define(['N/search', 'N/record', 'N/log', 'N/query'], (search, record, log, query
                     currency_display:     res.getText('currency'),
                     exchangerate:         res.getValue('exchangerate'),
                     last_modified:        formatToISO(res.getValue('lastmodifieddate')),
-                    datecreated:          formatToISO(res.getValue('datecreated'))
+                    datecreated:          formatToISO(res.getValue('datecreated')),
+                    created_by_id: res.getValue('createdby') ? Number(res.getValue('createdby')) : null,
+                    created_by_name: res.getText('createdby') || null,
                 });
             });
             

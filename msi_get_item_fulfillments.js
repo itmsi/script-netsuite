@@ -200,7 +200,7 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
             let sortColumn = sortBy;
             let searchColumns = [
                 'tranid', 'trandate', 'status', 'memo', 'entity',
-                'createdfrom', 'postingperiod', 'lastmodifieddate',
+                'createdfrom', 'postingperiod', 'lastmodifieddate', 'createdby',
                 'custbody_me_wf_created_by',
                 'custbody_me_approval_status',
                 'custbody_me_delegate_approver',
@@ -335,7 +335,9 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     incoterm_id: res.getValue('incoterm'),
                     incoterm_name: res.getText('incoterm') || null,
                     currency: res.getValue('currency'),
-                    currency_display: res.getText('currency')
+                    currency_display: res.getText('currency'),
+                    created_by_id: res.getValue('createdby') ? Number(res.getValue('createdby')) : null,
+                    created_by_name: res.getText('createdby') || null,
                 });
             });
 
