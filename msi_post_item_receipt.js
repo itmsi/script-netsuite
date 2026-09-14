@@ -13,7 +13,7 @@
    "customer_return_id": 5678, // Internal ID Customer Return (Return Authorization)
 
    // Header (opsional):
-   "trandate": "2026-03-11",    // format: YYYY-MM-DD atau DD-MM-YYYY
+   "trandate": "2026-03-11",    // format: YYYY-MM-DD, D/M/YYYY, atau D-M-YYYY (hari dulu)
    "memo": "Catatan penerimaan", // opsional
    "customform": 115, // opsional
    "class": 2, // opsional
@@ -39,7 +39,47 @@
 
  * Kalau "items" tidak dikirim -> semua baris di-receive dengan qty sisa default.
  */
-define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search, log, runtime) {
+define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (record, search, log, runtime, format) {
+
+    // =========================================================
+    // PARSE TRANDATE
+    // =========================================================
+    // Support: "YYYY-MM-DD", "YYYY-MM-DDTHH:mm:ss+07:00" (ISO, komponen waktu dibuang),
+    //          "D/M/YYYY", "D-M-YYYY" (konvensi MSI: hari dulu).
+    // PENTING: jangan pakai new Date(string) untuk string "YYYY-MM-DD" -
+    // itu diparse sebagai UTC midnight, lalu NetSuite convert ke timezone
+    // akun (biasanya mundur dari UTC) sehingga tanggalnya jadi mundur 1 hari.
+    // Makanya parsing manual ke komponen local date (y, m-1, d) diprioritaskan.
+    // Kalau gagal parse: THROW (jangan di-skip) - kalau di-skip diam-diam, NetSuite
+    // pakai default tanggal HARI INI dan receipt kelihatan sukses padahal salah.
+    function parseTrandate(raw) {
+        var value = String(raw).trim();
+        var datePart = value.split(/[T ]/)[0]; // buang jam/timezone kalau ada
+        var parts = datePart.split(/[-\/]/);
+        var d = null;
+
+        if (parts.length === 3 && !isNaN(+parts[0]) && !isNaN(+parts[1]) && !isNaN(+parts[2])) {
+            d = parts[0].length === 4
+                ? new Date(+parts[0], +parts[1] - 1, +parts[2])   // YYYY-MM-DD
+                : new Date(+parts[2], +parts[1] - 1, +parts[0]);  // D/M/YYYY atau D-M-YYYY
+        }
+
+        if (!d || isNaN(d.getTime())) {
+            // Fallback terakhir: biarkan NetSuite baca sesuai format tanggal akun
+            try {
+                d = format.parse({ value: datePart, type: format.Type.DATE });
+            } catch (e) {
+                d = null;
+            }
+        }
+
+        if (!d || isNaN(d.getTime())) {
+            throw new Error("Format trandate tidak valid: '" + raw + "'. Gunakan YYYY-MM-DD atau D/M/YYYY.");
+        }
+
+        log.audit('TRANDATE PARSED', 'raw: ' + raw + ' | parsed: ' + d.toISOString());
+        return d;
+    }
 
     // =========================================================
     // CORE: Buat Item Receipt dari PO atau TO
@@ -77,32 +117,22 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime'], function (record, search,
 
         // 3. Set header fields
 
-        // trandate: support YYYY-MM-DD dan DD-MM-YYYY
-        // PENTING: jangan pakai new Date(string) untuk string "YYYY-MM-DD" -
-        // itu diparse sebagai UTC midnight, lalu NetSuite convert ke timezone
-        // akun (biasanya mundur dari UTC) sehingga tanggalnya jadi mundur 1 hari.
-        // Makanya parsing manual ke komponen local date (y, m-1, d) diprioritaskan.
-        if (params.trandate) {
-            var d;
-            var parts = String(params.trandate).split(/[-\/]/);
-            if (parts.length === 3) {
-                d = parts[0].length === 4
-                    ? new Date(+parts[0], +parts[1] - 1, +parts[2])   // YYYY-MM-DD
-                    : new Date(+parts[2], +parts[1] - 1, +parts[0]);  // DD-MM-YYYY
-            } else {
-                d = new Date(params.trandate);
-            }
-            if (d && !isNaN(d.getTime())) {
-                itemReceipt.setValue({ fieldId: 'trandate', value: d });
-            }
+        // customform di-set PALING AWAL: mengganti custom form setelah field lain
+        // di-set bisa me-reset nilai default (mis. trandate balik ke tanggal hari ini).
+        if (params.customform !== undefined && params.customform !== null) {
+            itemReceipt.setValue({ fieldId: 'customform', value: params.customform });
         }
 
-        // Standard header fields
-        ['memo', 'customform', 'class', 'location', 'department'].forEach(function (field) {
+        ['memo', 'class', 'location', 'department'].forEach(function (field) {
             if (params[field] !== undefined && params[field] !== null) {
                 itemReceipt.setValue({ fieldId: field, value: params[field] });
             }
         });
+
+        // trandate di-set terakhir lewat parseTrandate() (lihat catatan di atas).
+        if (params.trandate) {
+            itemReceipt.setValue({ fieldId: 'trandate', value: parseTrandate(params.trandate) });
+        }
 
         // Auto-map custbody_* dari payload
         for (var key in params) {
