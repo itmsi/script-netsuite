@@ -4,6 +4,7 @@
  *  "sales_order_id": 5157,               // Internal ID Sales Order
  *  "transfer_order_id": 1234,   // Internal ID Transfer Order
  *  "vendor_return_id": 5678,    // Internal ID Vendor Return Authorization
+ *  "memo": "Catatan fulfillment",         // opsional
  */
 define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, search, runtime) {
 
@@ -47,6 +48,15 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
             // 🔥 Opsional: User bisa ganti custom form
             if (context.customform) {
                 fulfillment.setValue({ fieldId: 'customform', value: context.customform });
+            }
+
+            // 🔥 Opsional: memo header
+            if (context.memo !== undefined && context.memo !== null) {
+                try {
+                    fulfillment.setValue({ fieldId: 'memo', value: context.memo });
+                } catch (memoErr) {
+                    log.error('SET MEMO ERROR', memoErr.message);
+                }
             }
 
             // PENTING: jangan pakai new Date(string) untuk string "YYYY-MM-DD" -
@@ -333,6 +343,22 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 enableSourcing: true,
                 ignoreMandatoryFields: true // Bypass UI validation errors for standard fields mapped dynamically
             });
+
+            // 🔥 Safety-net: enableSourcing di save() di atas bisa re-source field
+            // dari SO/TO asal dan menimpa memo yang sudah di-set sebelum save.
+            // Set ulang via submitFields (tanpa sourcing) supaya memo pasti nempel.
+            if (context.memo !== undefined && context.memo !== null) {
+                try {
+                    record.submitFields({
+                        type: record.Type.ITEM_FULFILLMENT,
+                        id: fulfillmentId,
+                        values: { memo: context.memo },
+                        options: { enablesourcing: false, ignoreMandatoryFields: true }
+                    });
+                } catch (memoSubmitErr) {
+                    log.error('SET MEMO ERROR (submitFields)', memoSubmitErr.message);
+                }
+            }
 
              // 28 Juli 2026 Dharma Create Add note after save success
             // ==============================

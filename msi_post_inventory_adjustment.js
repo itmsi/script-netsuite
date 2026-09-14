@@ -20,6 +20,7 @@
    "custbody_me_inv_customer": 38,                    // Internal ID Customer / ME-Customer (opsional)
    "custbody_me_purchase_order_number": 5278,     // ME - Purchase Order Number header (opsional)
 //    "custbody_msi_cycle_count_cumber": 5278,  // MSI Cycle Count Number (opsional)
+   "custbody_me_opening_balance": true,          // ME - Opening Balance, checkbox true/false (opsional)
    "lines": [                         // Array item yang akan disesuaikan (wajib, minimal 1)
      {
        "item": 26612,                   // Internal ID item (wajib)
@@ -80,9 +81,8 @@ define(['N/record', 'N/format'], (record, format) => {
             invAdj.setValue({ fieldId: 'class', value: body.class });
 
             if (body.trandate) {
-                // Parse ISO date string "YYYY-MM-DD" langsung ke JS Date
-                // (format.parse() mengharapkan format locale D/M/YYYY, bukan ISO)
-                const [year, month, day] = body.trandate.split('-').map(Number);
+                // Format trandate: "DD-MM-YYYY" atau "DD/MM/YYYY"
+                const [day, month, year] = body.trandate.split(/[-\/]/).map(Number);
                 const parsedDate = new Date(year, month - 1, day);
                 invAdj.setValue({ fieldId: 'trandate', value: parsedDate });
             }
@@ -118,6 +118,11 @@ define(['N/record', 'N/format'], (record, format) => {
             // Custom header: MSI Cycle Count Number
             if (body.custbody_msi_cycle_count_cumber !== undefined) {
                 invAdj.setText({ fieldId: 'custbody_msi_cycle_count_cumber', text: String(body.custbody_msi_cycle_count_cumber) });
+            }
+
+            // Custom header: ME - Opening Balance (checkbox)
+            if (body.custbody_me_opening_balance !== undefined) {
+                invAdj.setValue({ fieldId: 'custbody_me_opening_balance', value: body.custbody_me_opening_balance });
             }
 
             // ── Proses setiap baris ───────────────────────────────────────────
