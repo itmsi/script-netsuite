@@ -5,11 +5,46 @@
  Create Item Receipt dari Purchase Order atau Transfer Order via transform.
  Gabungan MSI_Item_Receipt.js + msi_post_receive_item_po.js
 
- POST body:
+ CATATAN Transfer Order (TO) dengan banyak Item Fulfillment (mis. useitemcostastransfercost dicentang):
+ record.transform() TIDAK mendukung fromType=ITEM_FULFILLMENT -> toType=ITEM_RECEIPT (dicoba,
+ hasilnya error "That type of record transformation is not allowed"). Cara yang benar: transform
+ TETAP dari TRANSFER_ORDER, tapi di-scope ke 1 Item Fulfillment SPESIFIK lewat
+ defaultValues.itemfulfillment (terinspirasi dari URL native UI:
+ itemrcpt.nl?transform=trnfrord&itemfulfillment=<FULFILLMENT_ID>&id=<TO_ID>). Ini TERBUKTI bisa
+ SELEKTIF - baris lain yang kebetulan ada di fulfillment yang sama boleh ditinggal unchecked,
+ gak wajib dituntaskan semua (beda dari kalau transform TANPA scoping eksplisit, yang bikin
+ NetSuite auto-advance ke fulfillment berikutnya dan MEMAKSA semua baris fulfillment saat ini
+ tuntas dulu sebelum lanjut).
+
+ Kalau caller kirim "transfer_order_id" (tanpa "fulfillment_id"), script:
+   1. Cari semua Item Fulfillment milik TO itu lewat search, urut FIFO (paling lama duluan).
+   2. Loop tiap fulfillment: transform di-scope ke situ, ambil qty = min(sisa yang diminta,
+      yang tersedia di fulfillment itu), save kalau ada yang ke-checked.
+   3. Begitu qty yang diminta terpenuhi, LANGSUNG BERHENTI - fulfillment sisanya (walau ada stok
+      item yang sama di situ) SAMA SEKALI gak disentuh/gak ikut kereceive.
+ Hasilnya "goods_receipts" di response bisa berisi LEBIH DARI 1 Item Receipt kalau qty yang
+ diminta tersebar di beberapa Item Fulfillment (mis. diminta 10, batch pertama cuma kasih 3,
+ sisanya 7 diambil dari batch berikutnya) - dan baris LAIN yang kebetulan satu fulfillment tapi
+ gak diminta TETAP gak ikut ke-receive.
+
+ Item dengan "serials" TIDAK didukung lewat "transfer_order_id" polos kalau qty-nya bisa ke-split
+ ke beberapa Item Receipt (serial yang sama gak bisa dobel-assign ke tiap batch) - kirim
+ "fulfillment_id" + "transfer_order_id" spesifik buat baris yang ada serial-nya.
+
+ MODE DEBUG (investigasi, read-only, TIDAK nyimpen apapun):
+ {
+   "debug": true,
+   "transfer_order_id": 1234,
+   "fulfillment_id": 5678   // opsional: scope debug ke 1 fulfillment tertentu juga
+ }
+ -> transform TO ke Item Receipt (isDynamic:false, tanpa save), lalu dump semua field yang ada
+ di tiap baris sublist 'item' (termasuk daftar semua field id yang tersedia).
+
+ POST body (mode normal):
  {
    // Salah satu wajib diisi:
    "po_id": 5157,               // Internal ID Purchase Order
-   "transfer_order_id": 1234,   // Internal ID Transfer Order
+   "transfer_order_id": 1234,   // Internal ID Transfer Order (auto-loop per Item Fulfillment kalau perlu)
    "customer_return_id": 5678, // Internal ID Customer Return (Return Authorization)
 
    // Header (opsional):
@@ -31,7 +66,7 @@
        "department": 6,         // opsional: department per baris
        "class": 2,              // opsional: class per baris
        "rate": 150000,          // opsional: harga per unit (hanya berlaku untuk PO)
-       "serials": ["SN001"],    // opsional: array serial number
+       "serials": ["SN001"],    // opsional: array serial number (gak didukung untuk auto-split TO)
        // custcol_* fields juga otomatis di-map
      }
    ]
@@ -82,41 +117,50 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
     }
 
     // =========================================================
-    // CORE: Buat Item Receipt dari PO atau TO
+    // HELPER: Cocokkan 1 baris NetSuite ke item di payload
     // =========================================================
-    function receiveItems(params) {
+    // Utamakan 'line' (1-based), fallback ke line_sequence (orderline internal NetSuite),
+    // fallback lagi ke line_id (composite key "sourceId_lineNumber" dari GET PO/TO response).
+    function matchPayloadItem(payloadMap, lineNumOneBased, orderline, lineSeq, sourceId) {
+        return payloadMap['line_' + lineNumOneBased] ||
+            (orderline ? payloadMap['seq_' + String(orderline)] : null) ||
+            (orderline ? payloadMap['lid_' + String(orderline)] : null) ||
+            (lineSeq ? payloadMap['seq_' + String(lineSeq)] : null) ||
+            (lineSeq ? payloadMap['lid_' + String(lineSeq)] : null) ||
+            (lineSeq && sourceId ? payloadMap['lid_' + sourceId + '_' + lineSeq] : null) ||
+            null;
+    }
 
-        // 1. Deteksi tipe sumber
-        var sourceId, sourceType, isTransferOrder;
-        var isReturnAuth = false;
+    // =========================================================
+    // HELPER: Bangun map payload untuk pencarian O(1)
+    // =========================================================
+    function buildPayloadMap(payloadItems) {
+        var payloadMap = {};
+        if (payloadItems && payloadItems.length > 0) {
+            for (var x = 0; x < payloadItems.length; x++) {
+                var pItem = payloadItems[x];
+                var hasLine = pItem.line !== undefined && pItem.line !== null;
+                var hasSeq = pItem.line_sequence !== undefined && pItem.line_sequence !== null;
 
-        if (params.po_id) {
-            sourceId = params.po_id;
-            sourceType = record.Type.PURCHASE_ORDER;
-            isTransferOrder = false;
-        } else if (params.transfer_order_id) {
-            sourceId = params.transfer_order_id;
-            sourceType = record.Type.TRANSFER_ORDER;
-            isTransferOrder = true;
-        } else if (params.customer_return_id) {
-            sourceId = params.customer_return_id;
-            sourceType = record.Type.RETURN_AUTHORIZATION;
-            isTransferOrder = false;
-            isReturnAuth = true;
-        } else {
-            throw new Error("'po_id', 'transfer_order_id', atau 'customer_return_id' wajib diisi");
+                if (!hasLine && !hasSeq && !pItem.line_id) {
+                    throw new Error("Item array index " + x + ": 'line' (1-based) atau 'line_id' wajib diisi");
+                }
+
+                // 'line' adalah 1-based (1, 2, 3, ...)
+                if (hasLine) payloadMap['line_' + parseInt(pItem.line, 10)] = pItem;
+                // Fallback: line_sequence (orderline internal NetSuite) juga masih didukung
+                if (hasSeq) payloadMap['seq_' + pItem.line_sequence] = pItem;
+                // line_id: composite key "sourceId_lineNumber" dari GET PO/TO response
+                if (pItem.line_id) payloadMap['lid_' + String(pItem.line_id)] = pItem;
+            }
         }
+        return payloadMap;
+    }
 
-        // 2. Transform ke Item Receipt
-        var itemReceipt = record.transform({
-            fromType: sourceType,
-            fromId: sourceId,
-            toType: record.Type.ITEM_RECEIPT,
-            isDynamic: true  // wajib true untuk akses inventorydetail subrecord (serial)
-        });
-
-        // 3. Set header fields
-
+    // =========================================================
+    // HELPER: Set header fields Item Receipt dari payload
+    // =========================================================
+    function setHeaderFields(itemReceipt, params) {
         // customform di-set PALING AWAL: mengganti custom form setelah field lain
         // di-set bisa me-reset nilai default (mis. trandate balik ke tanggal hari ini).
         if (params.customform !== undefined && params.customform !== null) {
@@ -144,31 +188,15 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                 }
             }
         }
+    }
 
-        // 4. Siapkan map payload untuk pencarian O(1)
-        var payloadItems = params.items || params.lines; // Support format lama "lines"
-        var payloadMap = {};
-
-        if (payloadItems && payloadItems.length > 0) {
-            for (var x = 0; x < payloadItems.length; x++) {
-                var pItem = payloadItems[x];
-                var hasLine = pItem.line !== undefined && pItem.line !== null;
-                var hasSeq = pItem.line_sequence !== undefined && pItem.line_sequence !== null;
-
-                if (!hasLine && !hasSeq && !pItem.line_id) {
-                    throw new Error("Item array index " + x + ": 'line' (1-based) atau 'line_id' wajib diisi");
-                }
-
-                // 'line' adalah 1-based (1, 2, 3, ...)
-                if (hasLine) payloadMap['line_' + parseInt(pItem.line, 10)] = pItem;
-                // Fallback: line_sequence (orderline internal NetSuite) juga masih didukung
-                if (hasSeq) payloadMap['seq_' + pItem.line_sequence] = pItem;
-                // line_id: composite key "toId_lineNumber" dari GET TO response
-                if (pItem.line_id) payloadMap['lid_' + String(pItem.line_id)] = pItem;
-            }
-        }
-
-        // 5. Loop baris NetSuite (Single Pass)
+    // =========================================================
+    // HELPER: Isi baris item di 1 Item Receipt (Single Pass)
+    // =========================================================
+    // opts: { isTransferOrder, isReturnAuth, sourceId, allocate }
+    // allocate = true -> dipakai waktu auto-split TO: qty dibatasi oleh sisa alokasi
+    // (itemData.__remaining) DAN ketersediaan baris ini (nilai default 'quantity' dari NetSuite).
+    function processReceiptLines(itemReceipt, payloadItems, payloadMap, opts) {
         // Kita JANGAN uncheck semua di awal agar NetSuite tidak lupa dengan kuantitas shipped-nya
         var lineCount = itemReceipt.getLineCount({ sublistId: 'item' });
         var itemChecked = 0;
@@ -196,20 +224,34 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
 
             // Cari di payloadMap: utamakan 'line' (1-based), fallback ke line_sequence (orderline NetSuite)
             var lineNum = i + 1; // Konversi loop index 0-based ke 1-based
-            var itemData = payloadMap['line_' + lineNum] ||
-                (orderline ? payloadMap['seq_' + String(orderline)] : null) ||
-                (orderline ? payloadMap['lid_' + String(orderline)] : null) ||
-                (lineSeq ? payloadMap['seq_' + String(lineSeq)] : null) ||
-                (lineSeq ? payloadMap['lid_' + String(lineSeq)] : null) ||
-                (lineSeq && params.transfer_order_id ? payloadMap['lid_' + params.transfer_order_id + '_' + lineSeq] : null);
+            var itemData = matchPayloadItem(payloadMap, lineNum, orderline, lineSeq, opts.sourceId);
 
             if (!itemData) {
-                // Tidak ada di payload -> uncheck
+                // Tidak ada di payload -> uncheck. Berlaku sama buat PO/RA maupun TO: scoping ke
+                // 1 Item Fulfillment spesifik lewat defaultValues.itemfulfillment TERBUKTI bisa
+                // selektif (baris lain di fulfillment yang sama boleh ditinggal unchecked, gak
+                // wajib dituntaskan semua) - lihat createFulfillmentScopedReceipt().
                 itemReceipt.setCurrentSublistValue({
                     sublistId: 'item', fieldId: 'itemreceive', value: false
                 });
                 itemReceipt.commitLine({ sublistId: 'item' });
                 continue;
+            }
+
+            // TO multi-batch: posisi ('line') GAK stabil antar Item Fulfillment yang berbeda -
+            // NetSuite bisa naruh item yang beda di posisi yang sama di batch selanjutnya. Begitu
+            // 1 baris ketemu, kunci ke 'orderline' (identitas stabil di TO) dan buang key posisional
+            // dari map supaya batch berikutnya cocokkan berdasarkan orderline, bukan ketiban posisi.
+            if (opts.allocate && itemData.__resolvedOrderline === undefined) {
+                itemData.__resolvedOrderline = orderline || lineSeq || null;
+                if (itemData.__resolvedOrderline) {
+                    payloadMap['seq_' + String(itemData.__resolvedOrderline)] = itemData;
+                    // Key posisional cuma dibuang kalau ada pengganti stabil (seq_) buat dipakai
+                    // batch selanjutnya - biar gak "kehilangan" baris ini kalau orderline kosong.
+                    if (itemData.line !== undefined && itemData.line !== null) {
+                        delete payloadMap['line_' + parseInt(itemData.line, 10)];
+                    }
+                }
             }
 
             // Set itemreceive = true
@@ -220,7 +262,22 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             var serials = itemData.serials || [];
             var qty;
 
-            if (serials.length > 0) {
+            if (opts.allocate) {
+                // Auto-split TO: qty = min(sisa yang masih diminta, yang tersedia di fulfillment ini)
+                var available = parseFloat(itemReceipt.getCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity' })) || 0;
+                var remaining = itemData.__remaining === undefined ? Infinity : itemData.__remaining;
+                qty = Math.min(available, remaining);
+
+                if (!(qty > 0)) {
+                    // Sisa alokasi udah 0 (sudah kepenuhi fulfillment sebelumnya), atau fulfillment ini
+                    // gak punya sisa buat baris ini -> uncheck
+                    itemReceipt.setCurrentSublistValue({ sublistId: 'item', fieldId: 'itemreceive', value: false });
+                    itemReceipt.commitLine({ sublistId: 'item' });
+                    continue;
+                }
+
+                itemData.__remaining = (remaining === Infinity) ? Infinity : (remaining - qty);
+            } else if (serials.length > 0) {
                 qty = serials.length;
             } else if (itemData.quantity !== undefined && itemData.quantity !== null) {
                 qty = parseFloat(itemData.quantity) || 0;
@@ -249,7 +306,7 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                 }
             });
 
-            if (!isTransferOrder && !isReturnAuth && itemData.rate !== undefined && itemData.rate !== null) {
+            if (!opts.isTransferOrder && !opts.isReturnAuth && itemData.rate !== undefined && itemData.rate !== null) {
                 itemReceipt.setCurrentSublistValue({
                     sublistId: 'item', fieldId: 'unitcost', value: itemData.rate
                 });
@@ -313,16 +370,18 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             itemChecked++;
         }
 
-        if (itemChecked === 0) {
-            throw new Error("Tidak ada item valid untuk di-receive. Pastikan sudah 'Shipped'.");
-        }
+        return itemChecked;
+    }
 
-        // 6. Save
+    // =========================================================
+    // HELPER: Save Item Receipt + create note + bangun 1 baris response
+    // =========================================================
+    function saveItemReceiptAndBuildResponse(itemReceipt, params, sourceId, sourceRecordType, sourceKey, sourceNumKey, sourceTypeName) {
         var irId;
         try {
             // enableSourcing dimatikan untuk SEMUA tipe (PO, TO, Return Auth).
-            // Untuk TO pun transform sudah membawa location (lokasi tujuan),
-            // quantity, dan cost dari Item Fulfillment — jadi sourcing tidak wajib.
+            // Untuk TO, transform sudah membawa location (lokasi tujuan),
+            // quantity, dan cost dari Item Fulfillment yang sedang di-scope — jadi sourcing tidak wajib.
             // Dengan sourcing off, nilai class/location/department dari payload
             // (atau hasil transform dari source) menempel apa adanya,
             // tidak ditimpa sourcing rules (default item record / vendor).
@@ -335,55 +394,47 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             throw saveErr;
         }
 
-            // 28 Juli 2026 Dharma Create Add note after save success
-            // ==============================
-            // CREATE NOTE (FIRST)
-            // ==============================
-            if (params.note && params.note.trim() !== "") {
+        // 28 Juli 2026 Dharma Create Add note after save success
+        // ==============================
+        // CREATE NOTE (FIRST)
+        // ==============================
+        if (params.note && params.note.trim() !== "") {
 
-                var noteRec = record.create({
-                    type: 'note',
-                    isDynamic: true
-                });
+            var noteRec = record.create({
+                type: 'note',
+                isDynamic: true
+            });
 
-                noteRec.setValue({
-                    fieldId: 'title',
-                    value: params.noteTitle || 'API Note'
-                });
+            noteRec.setValue({
+                fieldId: 'title',
+                value: params.noteTitle || 'API Note'
+            });
 
-                noteRec.setValue({
-                    fieldId: 'note',
-                    value: params.note
-                });
+            noteRec.setValue({
+                fieldId: 'note',
+                value: params.note
+            });
 
-                noteRec.setValue({
-                    fieldId: 'transaction',
-                    value: irId 
-                });
+            noteRec.setValue({
+                fieldId: 'transaction',
+                value: irId
+            });
 
-                noteRec.setValue({
-                    fieldId: 'author',
-                    value: runtime.getCurrentUser().id
-                });
+            noteRec.setValue({
+                fieldId: 'author',
+                value: runtime.getCurrentUser().id
+            });
 
-                noteId = noteRec.save();
-            }
+            noteRec.save();
+        }
 
-        // 7. Build response
-        var responseData = [];
+        // Build 1 baris response
         try {
             var irFields = search.lookupFields({
                 type: search.Type.ITEM_RECEIPT,
                 id: irId,
                 columns: ['tranid', 'trandate']
             });
-
-            var sourceRecordType = search.Type.PURCHASE_ORDER;
-            if (isTransferOrder) {
-                sourceRecordType = search.Type.TRANSFER_ORDER;
-            } else if (isReturnAuth) {
-                sourceRecordType = search.Type.RETURN_AUTHORIZATION;
-            }
 
             var sourceFields = search.lookupFields({
                 type: sourceRecordType,
@@ -395,20 +446,6 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                 ? (sourceFields.tranid.length > 0 ? sourceFields.tranid[0].text : '')
                 : (sourceFields.tranid || '');
 
-            var sourceKey = 'po_id';
-            var sourceNumKey = 'po_number';
-            var sourceTypeName = 'purchase_order';
-
-            if (isTransferOrder) {
-                sourceKey = 'to_id';
-                sourceNumKey = 'to_number';
-                sourceTypeName = 'transfer_order';
-            } else if (isReturnAuth) {
-                sourceKey = 'customer_return_id';
-                sourceNumKey = 'customer_return_number';
-                sourceTypeName = 'customer_return';
-            }
-
             var lineObj = {
                 id: irId,
                 tranid: irFields.tranid || '',
@@ -418,23 +455,328 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             lineObj[sourceKey] = sourceId;
             lineObj[sourceNumKey] = sourceTranId;
 
-            responseData.push(lineObj);
+            return lineObj;
 
         } catch (e) {
             log.error('ERROR fetch IR info', e.message);
             // Tetap kembalikan irId meskipun lookupFields gagal
             var fallbackObj = { id: irId };
-            fallbackObj[isTransferOrder ? 'to_id' : (isReturnAuth ? 'customer_return_id' : 'po_id')] = sourceId;
-            responseData.push(fallbackObj);
+            fallbackObj[sourceKey] = sourceId;
+            return fallbackObj;
+        }
+    }
+
+    // =========================================================
+    // HELPER: Buat 1 Item Receipt dari 1 sumber (PO / Return Auth)
+    // =========================================================
+    function createOneReceipt(sourceType, sourceId, params, flags) {
+        var itemReceipt = record.transform({
+            fromType: sourceType,
+            fromId: sourceId,
+            toType: record.Type.ITEM_RECEIPT,
+            isDynamic: true  // wajib true untuk akses inventorydetail subrecord (serial)
+        });
+
+        setHeaderFields(itemReceipt, params);
+
+        var payloadItems = params.items || params.lines; // Support format lama "lines"
+        var payloadMap = buildPayloadMap(payloadItems);
+
+        var itemChecked = processReceiptLines(itemReceipt, payloadItems, payloadMap, {
+            isTransferOrder: flags.isTransferOrder,
+            isReturnAuth: flags.isReturnAuth,
+            sourceId: sourceId,
+            allocate: false
+        });
+
+        if (itemChecked === 0) {
+            throw new Error("Tidak ada item valid untuk di-receive. Pastikan sudah 'Shipped'.");
+        }
+
+        return saveItemReceiptAndBuildResponse(
+            itemReceipt, params, sourceId, flags.sourceRecordType,
+            flags.sourceKey, flags.sourceNumKey, flags.sourceTypeName
+        );
+    }
+
+    // =========================================================
+    // HELPER: Buat 1 Item Receipt yang di-scope ke 1 Item Fulfillment SPESIFIK
+    // =========================================================
+    // fromType TETAP TRANSFER_ORDER (fromType=ITEM_FULFILLMENT ditolak NetSuite) - scoping ke
+    // fulfillment tertentu dilakukan lewat defaultValues.itemfulfillment, terinspirasi dari URL
+    // native UI: itemrcpt.nl?transform=trnfrord&itemfulfillment=<ID>&id=<TO_ID>.
+    //
+    // allocate:false (SELEKTIF) - baris yang gak ada di payload di-uncheck, BUKAN dipaksa full.
+    // Ini buat nguji apakah NetSuite ngizinin nerima SEBAGIAN baris dari 1 fulfillment kalau kita
+    // eksplisit sebut fulfillment-nya (beda dari loop auto-advance yang TERBUKTI maksa semua baris
+    // tuntas). Kalau NetSuite tetap nolak partial di sini juga, berarti itu batasan mutlak platform
+    // - gak ada cara lain lewat script buat nerima sebagian doang dari barang yang sepaket.
+    function createScopedFulfillmentReceipt(transferOrderId, fulfillmentId, params) {
+        var itemReceipt = record.transform({
+            fromType: record.Type.TRANSFER_ORDER,
+            fromId: transferOrderId,
+            toType: record.Type.ITEM_RECEIPT,
+            isDynamic: true,
+            defaultValues: { itemfulfillment: fulfillmentId }
+        });
+
+        setHeaderFields(itemReceipt, params);
+
+        var payloadItems = params.items || params.lines;
+        var payloadMap = buildPayloadMap(payloadItems);
+
+        var itemChecked = processReceiptLines(itemReceipt, payloadItems, payloadMap, {
+            isTransferOrder: true,
+            isReturnAuth: false,
+            sourceId: fulfillmentId,
+            allocate: false
+        });
+
+        if (itemChecked === 0) {
+            throw new Error("Tidak ada item valid untuk di-receive dari Item Fulfillment " + fulfillmentId + ".");
+        }
+
+        return saveItemReceiptAndBuildResponse(
+            itemReceipt, params, fulfillmentId, search.Type.ITEM_FULFILLMENT,
+            'fulfillment_id', 'fulfillment_number', 'item_fulfillment'
+        );
+    }
+
+    // =========================================================
+    // HELPER: Cek apakah semua baris payload (yang punya qty eksplisit) sudah terpenuhi
+    // =========================================================
+    function allRequestsSatisfied(payloadItems) {
+        for (var i = 0; i < payloadItems.length; i++) {
+            var remaining = payloadItems[i].__remaining;
+            if (remaining === Infinity) return false; // masih mau ambil semua yang ada
+            if (remaining > 0) return false;
+        }
+        return true;
+    }
+
+    // =========================================================
+    // HELPER: Cari semua Item Fulfillment milik 1 Transfer Order, urut FIFO (paling lama duluan)
+    // =========================================================
+    function findEligibleFulfillments(transferOrderId) {
+        var results = [];
+        var s = search.create({
+            type: search.Type.ITEM_FULFILLMENT,
+            filters: [
+                ['createdfrom', 'anyof', [transferOrderId]],
+                'AND', ['mainline', 'is', 'T']
+            ],
+            columns: [
+                search.createColumn({ name: 'tranid' }),
+                search.createColumn({ name: 'trandate', sort: search.Sort.ASC }),
+                search.createColumn({ name: 'internalid', sort: search.Sort.ASC })
+            ]
+        });
+
+        s.run().each(function (r) {
+            results.push({ id: r.id, tranid: r.getText({ name: 'tranid' }) || r.getValue({ name: 'tranid' }) });
+            return true;
+        });
+
+        return results;
+    }
+
+    // =========================================================
+    // CORE: Receive Transfer Order, auto-loop per Item Fulfillment kalau perlu
+    // =========================================================
+    // Cari semua Item Fulfillment milik TO (urut FIFO), lalu untuk tiap fulfillment yang MASIH
+    // dibutuhkan, transform di-scope ke fulfillment itu spesifik (defaultValues.itemfulfillment -
+    // TERBUKTI bisa selektif, baris lain di fulfillment yang sama boleh ditinggal unchecked tanpa
+    // maksa full). Berhenti begitu qty yang diminta terpenuhi - fulfillment berikutnya (yang gak
+    // dibutuhkan lagi) SAMA SEKALI gak disentuh, walau ada sisa stok item yang sama di situ.
+    function receiveTransferOrder(params) {
+        var transferOrderId = params.transfer_order_id;
+        var payloadItems = params.items || params.lines;
+
+        if (payloadItems && payloadItems.length > 0) {
+            for (var k = 0; k < payloadItems.length; k++) {
+                // Kalau qty-nya ke-split ke beberapa Item Receipt (beberapa fulfillment), serial yang
+                // sama gak bisa dobel-assign ke tiap batch - butuh pemetaan serial per fulfillment
+                // yang belum didukung. Kirim per fulfillment_id manual buat baris yang ada serial-nya.
+                if (payloadItems[k].serials && payloadItems[k].serials.length > 0) {
+                    throw new Error("Item array index " + k + ": 'serials' tidak didukung lewat 'transfer_order_id' kalau qty-nya bisa ke-split ke beberapa Item Fulfillment. Kirim 'fulfillment_id' + 'transfer_order_id' spesifik buat baris ini.");
+                }
+                var hasExplicitQty = payloadItems[k].quantity !== undefined && payloadItems[k].quantity !== null;
+                payloadItems[k].__remaining = hasExplicitQty ? (parseFloat(payloadItems[k].quantity) || 0) : Infinity;
+            }
+        }
+
+        var payloadMap = buildPayloadMap(payloadItems);
+        var fulfillments = findEligibleFulfillments(transferOrderId);
+
+        if (fulfillments.length === 0) {
+            throw new Error("Tidak ada Item Fulfillment yang ditemukan untuk Transfer Order " + transferOrderId + ". Pastikan sudah 'Shipped'.");
+        }
+
+        var responseData = [];
+
+        for (var f = 0; f < fulfillments.length; f++) {
+            // Udah cukup -> stop, jangan sentuh fulfillment sisanya sama sekali
+            if (payloadItems && payloadItems.length > 0 && allRequestsSatisfied(payloadItems)) break;
+
+            var itemReceipt = record.transform({
+                fromType: record.Type.TRANSFER_ORDER,
+                fromId: transferOrderId,
+                toType: record.Type.ITEM_RECEIPT,
+                isDynamic: true,
+                defaultValues: { itemfulfillment: fulfillments[f].id }
+            });
+
+            setHeaderFields(itemReceipt, params);
+
+            var itemChecked = processReceiptLines(itemReceipt, payloadItems, payloadMap, {
+                isTransferOrder: true,
+                isReturnAuth: false,
+                sourceId: transferOrderId,
+                allocate: !!(payloadItems && payloadItems.length > 0)
+            });
+
+            if (itemChecked === 0) {
+                // Fulfillment ini gak nyumbang apa-apa buat baris yang diminta -> skip, lanjut
+                continue;
+            }
+
+            var lineObj = saveItemReceiptAndBuildResponse(
+                itemReceipt, params, transferOrderId, search.Type.TRANSFER_ORDER,
+                'to_id', 'to_number', 'transfer_order'
+            );
+
+            responseData.push(lineObj);
+        }
+
+        if (responseData.length === 0) {
+            throw new Error("Tidak ada item valid untuk di-receive dari Transfer Order " + transferOrderId + ". Pastikan sudah 'Shipped'.");
+        }
+
+        if (payloadItems && payloadItems.length > 0 && !allRequestsSatisfied(payloadItems)) {
+            var shortfalls = [];
+            for (var x = 0; x < payloadItems.length; x++) {
+                var remaining = payloadItems[x].__remaining;
+                if (remaining === Infinity || remaining > 0) {
+                    shortfalls.push('index ' + x + ' (kurang ' + (remaining === Infinity ? 'semua' : remaining) + ')');
+                }
+            }
+            throw new Error(
+                "Sebagian item berhasil di-receive (" + responseData.length + " Item Receipt dibuat: " +
+                responseData.map(function (r) { return r.tranid; }).join(', ') +
+                "), TAPI qty yang diminta belum terpenuhi semua - kurang di: " + shortfalls.join('; ') +
+                ". Kemungkinan sisanya belum di-Ship dari lokasi asal."
+            );
         }
 
         return responseData;
     }
 
     // =========================================================
+    // CORE: Router - Buat Item Receipt dari PO, TO, Item Fulfillment, atau Return Auth
+    // =========================================================
+    function receiveItems(params) {
+        if (params.po_id) {
+            return [createOneReceipt(record.Type.PURCHASE_ORDER, params.po_id, params, {
+                isTransferOrder: false, isReturnAuth: false,
+                sourceRecordType: search.Type.PURCHASE_ORDER,
+                sourceKey: 'po_id', sourceNumKey: 'po_number', sourceTypeName: 'purchase_order'
+            })];
+        }
+
+        if (params.fulfillment_id) {
+            if (!params.transfer_order_id) {
+                throw new Error("'fulfillment_id' harus dikirim bareng 'transfer_order_id' (transform tetap dari Transfer Order, fulfillment_id cuma buat scoping ke 1 batch spesifik)");
+            }
+            return [createScopedFulfillmentReceipt(params.transfer_order_id, params.fulfillment_id, params)];
+        }
+
+        if (params.transfer_order_id) {
+            return receiveTransferOrder(params);
+        }
+
+        if (params.customer_return_id) {
+            return [createOneReceipt(record.Type.RETURN_AUTHORIZATION, params.customer_return_id, params, {
+                isTransferOrder: false, isReturnAuth: true,
+                sourceRecordType: search.Type.RETURN_AUTHORIZATION,
+                sourceKey: 'customer_return_id', sourceNumKey: 'customer_return_number', sourceTypeName: 'customer_return'
+            })];
+        }
+
+        throw new Error("'po_id', 'transfer_order_id', atau 'customer_return_id' wajib diisi");
+    }
+
+    // =========================================================
+    // DEBUG: Investigasi struktur baris hasil transform TO -> Item Receipt
+    // =========================================================
+    // Read-only, TIDAK pernah save. Dipakai buat lihat field 'itemshipdoc' dkk yang menunjukkan
+    // transform ini ter-scope ke Item Fulfillment mana.
+    //
+    // Kalau "fulfillment_id" diisi, dicoba scope transform ke Item Fulfillment itu spesifik lewat
+    // defaultValues (terinspirasi dari URL native UI NetSuite: itemrcpt.nl?transform=trnfrord&
+    // itemfulfillment=<ID>&id=<TO_ID>) - fromType TETAP TRANSFER_ORDER (bukan ITEM_FULFILLMENT,
+    // itu yang ditolak NetSuite).
+    function inspectTransferOrder(transferOrderId, fulfillmentId) {
+        if (!transferOrderId) {
+            throw new Error("'transfer_order_id' wajib diisi untuk mode debug");
+        }
+
+        var transformOpts = {
+            fromType: record.Type.TRANSFER_ORDER,
+            fromId: transferOrderId,
+            toType: record.Type.ITEM_RECEIPT,
+            isDynamic: false
+        };
+
+        if (fulfillmentId) {
+            transformOpts.defaultValues = { itemfulfillment: fulfillmentId };
+        }
+
+        var itemReceipt = record.transform(transformOpts);
+
+        var sublistFields = itemReceipt.getSublistFields({ sublistId: 'item' });
+        var lineCount = itemReceipt.getLineCount({ sublistId: 'item' });
+        var lines = [];
+
+        for (var i = 0; i < lineCount; i++) {
+            var lineData = { _line_index: i };
+            for (var f = 0; f < sublistFields.length; f++) {
+                var fieldId = sublistFields[f];
+                try {
+                    var v = itemReceipt.getSublistValue({ sublistId: 'item', fieldId: fieldId, line: i });
+                    if (v !== '' && v !== null && v !== undefined) {
+                        lineData[fieldId] = v;
+                    }
+                } catch (e) {
+                    // field ini gak kebaca di baris ini, skip
+                }
+            }
+            lines.push(lineData);
+        }
+
+        return {
+            success: true,
+            debug: true,
+            transfer_order_id: transferOrderId,
+            requested_fulfillment_id: fulfillmentId || null,
+            line_count: lineCount,
+            available_sublist_fields: sublistFields,
+            lines: lines
+        };
+    }
+
+    // =========================================================
     // RESTLET ENTRY POINT
     // =========================================================
     function post(params) {
+        if (params.debug === true || params.debug === 'true') {
+            try {
+                return inspectTransferOrder(params.transfer_order_id, params.fulfillment_id);
+            } catch (e) {
+                log.error('DEBUG ERROR', e);
+                return { success: false, message: e.message };
+            }
+        }
+
         try {
             var result = receiveItems(params);
             var topKey = params.transfer_order_id ? 'transfer_order_id' : (params.customer_return_id ? 'customer_return_id' : 'purchase_order_id');
