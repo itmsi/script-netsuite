@@ -555,6 +555,90 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
     }
 
     // =========================================================
+    // HELPER: Isi baris item (STANDARD MODE, bukan dynamic) - khusus loop auto-split TO
+    // =========================================================
+    // Semua debug call yang berhasil (selalu isDynamic:false) SELALU nunjukin data yang benar,
+    // sedangkan proses receive asli (isDynamic:true, pakai selectLine/commitLine) TERBUKTI stale di
+    // transform ke-3/ke-4 dst dalam 1 eksekusi yang sama (record.load() workaround gak ngefek).
+    // Jadi loop auto-split TO dipindah ke standard mode (getSublistValue/setSublistValue by index,
+    // gak butuh selectLine/commitLine) - gak masalah karena serial number (butuh dynamic mode buat
+    // akses inventorydetail subrecord) memang udah gak didukung di jalur auto-split ini.
+    function processReceiptLinesStandard(itemReceipt, payloadItems, payloadMap, opts) {
+        var lineCount = itemReceipt.getLineCount({ sublistId: 'item' });
+        var itemChecked = 0;
+
+        for (var i = 0; i < lineCount; i++) {
+            var orderline = itemReceipt.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: i });
+            var lineSeq = itemReceipt.getSublistValue({ sublistId: 'item', fieldId: 'line', line: i });
+
+            if (!payloadItems || payloadItems.length === 0) {
+                var autoQty = parseFloat(itemReceipt.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0;
+                if (autoQty > 0) {
+                    itemReceipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: true });
+                    itemChecked++;
+                } else {
+                    itemReceipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: false });
+                }
+                continue;
+            }
+
+            var lineNum = i + 1;
+            var itemData = matchPayloadItem(payloadMap, lineNum, orderline, lineSeq, opts.sourceId);
+
+            if (!itemData) {
+                itemReceipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: false });
+                continue;
+            }
+
+            // Pin ke orderline (sama seperti versi dynamic) - posisi gak stabil antar fulfillment
+            if (itemData.__resolvedOrderline === undefined) {
+                itemData.__resolvedOrderline = orderline || lineSeq || null;
+                if (itemData.__resolvedOrderline) {
+                    payloadMap['seq_' + String(itemData.__resolvedOrderline)] = itemData;
+                    if (itemData.line !== undefined && itemData.line !== null) {
+                        delete payloadMap['line_' + parseInt(itemData.line, 10)];
+                    }
+                }
+            }
+
+            var available = parseFloat(itemReceipt.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0;
+            var remaining = itemData.__remaining === undefined ? Infinity : itemData.__remaining;
+            var qty = Math.min(available, remaining);
+
+            if (!(qty > 0)) {
+                itemReceipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: false });
+                continue;
+            }
+
+            itemData.__remaining = (remaining === Infinity) ? Infinity : (remaining - qty);
+
+            itemReceipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: true });
+            itemReceipt.setSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i, value: qty });
+
+            ['location', 'department', 'class'].forEach(function (f) {
+                if (itemData[f] !== undefined && itemData[f] !== null) {
+                    itemReceipt.setSublistValue({ sublistId: 'item', fieldId: f, line: i, value: itemData[f] });
+                }
+            });
+
+            for (var lineKey in itemData) {
+                if (lineKey.indexOf('custcol') === 0) {
+                    try {
+                        itemReceipt.setSublistValue({ sublistId: 'item', fieldId: lineKey, line: i, value: itemData[lineKey] });
+                    } catch (e) {
+                        log.error('SET CUSTCOL ERROR', lineKey + ': ' + e.message);
+                    }
+                }
+            }
+
+            log.debug('SET QTY', 'Line index: ' + i + ' | orderline: ' + orderline + ' | qty: ' + qty);
+            itemChecked++;
+        }
+
+        return itemChecked;
+    }
+
+    // =========================================================
     // HELPER: Cari semua Item Fulfillment milik 1 Transfer Order, urut FIFO (paling lama duluan)
     // =========================================================
     function findEligibleFulfillments(transferOrderId) {
@@ -581,6 +665,51 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
     }
 
     // =========================================================
+    // HELPER: Peta posisi (1-based) -> orderline ASLI
+    // =========================================================
+    // Field 'line' di record TO sendiri TERBUKTI beda "ruang nomor" dari 'orderline' di dokumen
+    // turunan (TO pakai 1,4,7 - kemungkinan ada baris lain yang ikut ke-hitung di situ - sementara
+    // downstream pakai 3,6,9). Jadi gak bisa baca 'line' dari TO langsung. Solusinya 2 langkah:
+    //   1. Posisi NATURAL item di TO (urutan baris di sublist 'item', BUKAN nilai field 'line') -
+    //      ini stabil karena TO pasti punya SEMUA baris lengkap.
+    //   2. orderline per ITEM (bukan per posisi) digabung dari SEMUA Item Fulfillment TO ini,
+    //      dicocokkan berdasarkan identitas item - aman walau ada fulfillment yang gak lengkap,
+    //      karena yang jadi kunci pencocokan itu ITEM-nya, bukan posisinya.
+    function getTransferOrderLineMap(transferOrderId, fulfillments) {
+        var toRecord = record.load({ type: record.Type.TRANSFER_ORDER, id: transferOrderId, isDynamic: false });
+        var positionToItem = {};
+        var toLineCount = toRecord.getLineCount({ sublistId: 'item' });
+        for (var i = 0; i < toLineCount; i++) {
+            positionToItem[i + 1] = toRecord.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
+        }
+
+        var itemToOrderline = {};
+        for (var f = 0; f < fulfillments.length; f++) {
+            var preview = record.transform({
+                fromType: record.Type.TRANSFER_ORDER,
+                fromId: transferOrderId,
+                toType: record.Type.ITEM_RECEIPT,
+                isDynamic: false,
+                defaultValues: { itemfulfillment: fulfillments[f].id }
+            });
+            var previewLineCount = preview.getLineCount({ sublistId: 'item' });
+            for (var p = 0; p < previewLineCount; p++) {
+                var itemId = preview.getSublistValue({ sublistId: 'item', fieldId: 'item', line: p });
+                var orderline = preview.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: p });
+                if (itemId && orderline !== '' && orderline !== null && orderline !== undefined && itemToOrderline[itemId] === undefined) {
+                    itemToOrderline[itemId] = orderline;
+                }
+            }
+        }
+
+        var map = {};
+        for (var pos in positionToItem) {
+            map[pos] = itemToOrderline[positionToItem[pos]];
+        }
+        return map;
+    }
+
+    // =========================================================
     // CORE: Receive Transfer Order, auto-loop per Item Fulfillment kalau perlu
     // =========================================================
     // Cari semua Item Fulfillment milik TO (urut FIFO), lalu untuk tiap fulfillment yang MASIH
@@ -592,25 +721,45 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
         var transferOrderId = params.transfer_order_id;
         var payloadItems = params.items || params.lines;
 
+        var fulfillments = findEligibleFulfillments(transferOrderId);
+        if (fulfillments.length === 0) {
+            throw new Error("Tidak ada Item Fulfillment yang ditemukan untuk Transfer Order " + transferOrderId + ". Pastikan sudah 'Shipped'.");
+        }
+
         if (payloadItems && payloadItems.length > 0) {
+            var toLineMap = null; // lazy-load, cuma kalau ada payload item yang pakai 'line' posisional
+
             for (var k = 0; k < payloadItems.length; k++) {
+                var item = payloadItems[k];
+
                 // Kalau qty-nya ke-split ke beberapa Item Receipt (beberapa fulfillment), serial yang
                 // sama gak bisa dobel-assign ke tiap batch - butuh pemetaan serial per fulfillment
                 // yang belum didukung. Kirim per fulfillment_id manual buat baris yang ada serial-nya.
-                if (payloadItems[k].serials && payloadItems[k].serials.length > 0) {
+                if (item.serials && item.serials.length > 0) {
                     throw new Error("Item array index " + k + ": 'serials' tidak didukung lewat 'transfer_order_id' kalau qty-nya bisa ke-split ke beberapa Item Fulfillment. Kirim 'fulfillment_id' + 'transfer_order_id' spesifik buat baris ini.");
                 }
-                var hasExplicitQty = payloadItems[k].quantity !== undefined && payloadItems[k].quantity !== null;
-                payloadItems[k].__remaining = hasExplicitQty ? (parseFloat(payloadItems[k].quantity) || 0) : Infinity;
+
+                // 'line' (posisi) GAK reliable buat auto-split multi-fulfillment - resolve ke
+                // 'line_sequence' (orderline) asli lewat getTransferOrderLineMap() (posisi natural
+                // TO + orderline gabungan semua fulfillment), lalu buang 'line' biar gak ada
+                // matching berbasis posisi sama sekali di jalur ini.
+                if ((item.line_sequence === undefined || item.line_sequence === null) && !item.line_id
+                    && item.line !== undefined && item.line !== null) {
+                    if (!toLineMap) toLineMap = getTransferOrderLineMap(transferOrderId, fulfillments);
+                    var resolvedSeq = toLineMap[parseInt(item.line, 10)];
+                    if (resolvedSeq === undefined) {
+                        throw new Error("Item array index " + k + ": 'line' " + item.line + " gak ketemu di Transfer Order " + transferOrderId + ".");
+                    }
+                    item.line_sequence = resolvedSeq;
+                }
+                delete item.line;
+
+                var hasExplicitQty = item.quantity !== undefined && item.quantity !== null;
+                item.__remaining = hasExplicitQty ? (parseFloat(item.quantity) || 0) : Infinity;
             }
         }
 
         var payloadMap = buildPayloadMap(payloadItems);
-        var fulfillments = findEligibleFulfillments(transferOrderId);
-
-        if (fulfillments.length === 0) {
-            throw new Error("Tidak ada Item Fulfillment yang ditemukan untuk Transfer Order " + transferOrderId + ". Pastikan sudah 'Shipped'.");
-        }
 
         var responseData = [];
 
@@ -618,17 +767,22 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             // Udah cukup -> stop, jangan sentuh fulfillment sisanya sama sekali
             if (payloadItems && payloadItems.length > 0 && allRequestsSatisfied(payloadItems)) break;
 
+            log.audit('TO LOOP', 'Iterasi ' + f + ' | fulfillment_id: ' + fulfillments[f].id + ' | fulfillment_number: ' + fulfillments[f].tranid);
+
+            // isDynamic:false (STANDARD MODE) - semua debug call yang berhasil selalu pakai mode ini
+            // dan selalu nunjukin data benar, sedangkan dynamic mode (selectLine/commitLine) TERBUKTI
+            // stale di transform berulang dalam 1 eksekusi. Lihat processReceiptLinesStandard().
             var itemReceipt = record.transform({
                 fromType: record.Type.TRANSFER_ORDER,
                 fromId: transferOrderId,
                 toType: record.Type.ITEM_RECEIPT,
-                isDynamic: true,
+                isDynamic: false,
                 defaultValues: { itemfulfillment: fulfillments[f].id }
             });
 
             setHeaderFields(itemReceipt, params);
 
-            var itemChecked = processReceiptLines(itemReceipt, payloadItems, payloadMap, {
+            var itemChecked = processReceiptLinesStandard(itemReceipt, payloadItems, payloadMap, {
                 isTransferOrder: true,
                 isReturnAuth: false,
                 sourceId: transferOrderId,
@@ -770,6 +924,18 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
     function post(params) {
         if (params.debug === true || params.debug === 'true') {
             try {
+                if (params.to_line_map === true || params.to_line_map === 'true') {
+                    // Test getTransferOrderLineMap() versi baru (posisi natural TO + orderline
+                    // gabungan semua fulfillment, dicocokkan per item).
+                    var fulfillmentsForMap = findEligibleFulfillments(params.transfer_order_id);
+                    return {
+                        success: true,
+                        debug: true,
+                        transfer_order_id: params.transfer_order_id,
+                        fulfillments_used: fulfillmentsForMap,
+                        to_line_map: getTransferOrderLineMap(params.transfer_order_id, fulfillmentsForMap)
+                    };
+                }
                 return inspectTransferOrder(params.transfer_order_id, params.fulfillment_id);
             } catch (e) {
                 log.error('DEBUG ERROR', e);
