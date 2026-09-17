@@ -675,12 +675,26 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
     //   2. orderline per ITEM (bukan per posisi) digabung dari SEMUA Item Fulfillment TO ini,
     //      dicocokkan berdasarkan identitas item - aman walau ada fulfillment yang gak lengkap,
     //      karena yang jadi kunci pencocokan itu ITEM-nya, bukan posisinya.
+    //
+    // KALAU item YANG SAMA muncul di lebih dari 1 baris TO (mis. item X di line 4 DAN line 5):
+    // gak bisa dicocokkan lewat identitas item doang (dua-duanya sama). Solusinya: hitung SELISIH
+    // TETAP antara 'orderline' dan field 'line' milik TO sendiri, pakai item-item yang GAK dobel
+    // sebagai kalibrasi (itu pasti benar, gak ambigu - kebukti dari semua TO yang udah dites,
+    // selisihnya selalu KONSISTEN, mis. +2). Begitu selisihnya ketemu dan konsisten, langsung
+    // hitung orderline = TO_line + selisih buat SEMUA posisi termasuk yang dobel - gak perlu nebak
+    // dari fulfillment mana yang kebetulan udah ke-shipped/ke-scan duluan.
     function getTransferOrderLineMap(transferOrderId, fulfillments) {
         var toRecord = record.load({ type: record.Type.TRANSFER_ORDER, id: transferOrderId, isDynamic: false });
         var positionToItem = {};
+        var positionToOwnLine = {};
+        var itemPositionCount = {};
         var toLineCount = toRecord.getLineCount({ sublistId: 'item' });
         for (var i = 0; i < toLineCount; i++) {
-            positionToItem[i + 1] = toRecord.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
+            var itmId = toRecord.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
+            var pos = i + 1;
+            positionToItem[pos] = itmId;
+            positionToOwnLine[pos] = toRecord.getSublistValue({ sublistId: 'item', fieldId: 'line', line: i });
+            itemPositionCount[itmId] = (itemPositionCount[itmId] || 0) + 1;
         }
 
         var itemToOrderline = {};
@@ -702,11 +716,30 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             }
         }
 
-        var map = {};
-        for (var pos in positionToItem) {
-            map[pos] = itemToOrderline[positionToItem[pos]];
+        // Kalibrasi selisih dari posisi yang GAK dobel (unambiguous) dan udah ketemu orderline-nya
+        var offsetVotes = {};
+        for (var calibPos in positionToItem) {
+            if (itemPositionCount[positionToItem[calibPos]] > 1) continue; // skip item dobel
+            var calibOrderline = itemToOrderline[positionToItem[calibPos]];
+            if (calibOrderline === undefined) continue; // belum ketemu di fulfillment manapun, skip
+            var offset = parseInt(calibOrderline, 10) - parseInt(positionToOwnLine[calibPos], 10);
+            offsetVotes[offset] = (offsetVotes[offset] || 0) + 1;
         }
-        return map;
+        var offsetKeys = Object.keys(offsetVotes);
+        var consistentOffset = (offsetKeys.length === 1) ? parseInt(offsetKeys[0], 10) : null;
+
+        var map = {};
+        for (var pos2 in positionToItem) {
+            if (consistentOffset !== null) {
+                // Selisih konsisten -> hitung langsung, gak perlu peduli item dobel atau nggak
+                map[pos2] = String(parseInt(positionToOwnLine[pos2], 10) + consistentOffset);
+            } else {
+                // Gak bisa kalibrasi (mis. semua item di TO ini kebetulan dobel) -> fallback
+                // ke pencocokan by-item (gak aman buat yang dobel, tapi lebih baik dari gak ada sama sekali)
+                map[pos2] = itemToOrderline[positionToItem[pos2]];
+            }
+        }
+        return { map: map };
     }
 
     // =========================================================
@@ -746,7 +779,8 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                 if ((item.line_sequence === undefined || item.line_sequence === null) && !item.line_id
                     && item.line !== undefined && item.line !== null) {
                     if (!toLineMap) toLineMap = getTransferOrderLineMap(transferOrderId, fulfillments);
-                    var resolvedSeq = toLineMap[parseInt(item.line, 10)];
+
+                    var resolvedSeq = toLineMap.map[parseInt(item.line, 10)];
                     if (resolvedSeq === undefined) {
                         throw new Error("Item array index " + k + ": 'line' " + item.line + " gak ketemu di Transfer Order " + transferOrderId + ".");
                     }
