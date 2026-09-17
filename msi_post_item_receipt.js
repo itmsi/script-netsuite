@@ -73,6 +73,31 @@
  }
 
  * Kalau "items" tidak dikirim -> semua baris di-receive dengan qty sisa default.
+ *
+ * =============================================
+ * MAPPING NOMOR BARIS (khusus TO auto-loop)
+ * =============================================
+ * 'line' yang dikirim caller itu nomor baris MILIK DOKUMEN CALLER, dan itu TIDAK selalu sama
+ * dengan posisi baris di sublist 'item' milik TO (contoh nyata: caller ngirim line 3,5,12,15
+ * padahal maksudnya baris ke-1, ke-3, ... di TO - nomornya diambil dari dokumen re-order mereka).
+ * Kalau ditebak mentah sebagai posisi, baris bisa nyasar ke orderline yang salah dan yang
+ * kelihatan cuma "qty kurang / belum di-Ship" padahal barangnya ADA di fulfillment itu.
+ *
+ * Karena itu script coba beberapa cara baca 'line' dan pakai yang orderline hasilnya BENAR-BENAR
+ * ada di Item Fulfillment yang mau di-receive (dicatat di log audit 'LINE MAP'):
+ *   - position   : 'line' = posisi baris di TO (perilaku lama, dipakai kalau cocok semua)
+ *   - orderline  : caller sudah kirim orderline / linesequencenumber NetSuite
+ *   - if_line    : 'line' = nomor baris di record Item Fulfillment (GET item fulfilments)
+ *   - to_line    : 'line' = nilai field 'line' milik TO sendiri
+ *   - item       : cocokkan lewat item ID (cuma kalau item itu gak dobel di TO)
+ *   - position+K / orderline+K : 'line' caller ke-geser K dari salah satu di atas
+ *
+ * Caller juga bisa maksa (opsional):
+ *   "line_mode"   : "position" | "orderline" | "if_line" | "to_line" | "item" | "auto" (default auto)
+ *   "line_offset" : angka yang ditambahkan ke 'line' sebelum diterjemahkan
+ *
+ * PALING AMAN: kirim "line_sequence" (linesequencenumber dari GET PO/TO) atau "line_id"
+ * (lineuniquekey dari GET) - itu identitas stabil, gak perlu diterjemahkan.
  */
 define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (record, search, log, runtime, format) {
 
@@ -687,17 +712,51 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
         var toRecord = record.load({ type: record.Type.TRANSFER_ORDER, id: transferOrderId, isDynamic: false });
         var positionToItem = {};
         var positionToOwnLine = {};
+        var positionToFilteredPos = {};   // posisi natural -> posisi setelah baris full-received di-skip & dinomorin ulang
+        var positionToShippablePos = {};  // posisi natural -> posisi setelah baris "belum pernah di-ship" di-skip & dinomorin ulang
         var itemPositionCount = {};
         var toLineCount = toRecord.getLineCount({ sublistId: 'item' });
+        var filteredCounter = 0;
+        var shippableCounter = 0;
         for (var i = 0; i < toLineCount; i++) {
             var itmId = toRecord.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
             var pos = i + 1;
             positionToItem[pos] = itmId;
             positionToOwnLine[pos] = toRecord.getSublistValue({ sublistId: 'item', fieldId: 'line', line: i });
             itemPositionCount[itmId] = (itemPositionCount[itmId] || 0) + 1;
+
+            var toQty = parseFloat(toRecord.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0;
+            var toQtyFulfilled = parseFloat(toRecord.getSublistValue({ sublistId: 'item', fieldId: 'quantityfulfilled', line: i })) || 0;
+            var toQtyReceived = parseFloat(toRecord.getSublistValue({ sublistId: 'item', fieldId: 'quantityreceived', line: i })) || 0;
+
+            // "Belum full-received" (dibandingin ke total qty ORDER) - salah satu variasi filter
+            // yang mungkin dipakai sistem eksternal buat nomorin ulang baris dari 1.
+            if (toQtyReceived < toQty) {
+                filteredCounter++;
+                positionToFilteredPos[pos] = filteredCounter;
+            }
+
+            // "Udah di-fulfill (shipped) tapi belum di-receive" - variasi filter LAIN yang TERBUKTI
+            // dipakai di kasus nyata: baris yang Fulfilled=0 (belum pernah dikirim sama sekali)
+            // di-skip total dari nomor eksternal, cuma baris yang ADA sisa siap-diterima yang muncul.
+            if (toQtyFulfilled > toQtyReceived) {
+                shippableCounter++;
+                positionToShippablePos[pos] = shippableCounter;
+            }
         }
 
-        var itemToOrderline = {};
+        // orderline per ITEM: disimpan sebagai LIST (bukan cuma yang pertama) supaya item yang
+        // muncul di beberapa baris TO (dobel) tetap bisa dipetakan berurutan, bukan semuanya
+        // ditimpuk ke orderline yang sama.
+        //
+        // PENTING: baca 'orderline' di sini lewat record.transform(TO->ITEM_RECEIPT, defaultValues) -
+        // TERBUKTI metode ini kasih nilai BEDA (konsisten +1 di satu kasus nyata) dibanding baca
+        // langsung dari record.load(ITEM_FULFILLMENT) yang dipakai getFulfillmentOrderlineIndex().
+        // Proses receive ASLI (processReceiptLinesStandard) baca 'orderline' lewat metode transform
+        // ini juga - jadi validOrderlines HARUS dari sumber yang SAMA, bukan dari ifIndex, biar
+        // scoring gak nyalah-nyalahin kandidat yang justru benar buat eksekusi aslinya.
+        var itemToOrderlines = {};
+        var validOrderlines = {};
         for (var f = 0; f < fulfillments.length; f++) {
             var preview = record.transform({
                 fromType: record.Type.TRANSFER_ORDER,
@@ -710,17 +769,25 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             for (var p = 0; p < previewLineCount; p++) {
                 var itemId = preview.getSublistValue({ sublistId: 'item', fieldId: 'item', line: p });
                 var orderline = preview.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: p });
-                if (itemId && orderline !== '' && orderline !== null && orderline !== undefined && itemToOrderline[itemId] === undefined) {
-                    itemToOrderline[itemId] = orderline;
+                if (!itemId || orderline === '' || orderline === null || orderline === undefined) continue;
+                validOrderlines[String(orderline)] = true;
+                if (!itemToOrderlines[itemId]) itemToOrderlines[itemId] = [];
+                if (itemToOrderlines[itemId].indexOf(String(orderline)) === -1) {
+                    itemToOrderlines[itemId].push(String(orderline));
                 }
             }
+        }
+
+        function firstOrderlineOf(itemId) {
+            var list = itemToOrderlines[itemId];
+            return (list && list.length > 0) ? list[0] : undefined;
         }
 
         // Kalibrasi selisih dari posisi yang GAK dobel (unambiguous) dan udah ketemu orderline-nya
         var offsetVotes = {};
         for (var calibPos in positionToItem) {
             if (itemPositionCount[positionToItem[calibPos]] > 1) continue; // skip item dobel
-            var calibOrderline = itemToOrderline[positionToItem[calibPos]];
+            var calibOrderline = firstOrderlineOf(positionToItem[calibPos]);
             if (calibOrderline === undefined) continue; // belum ketemu di fulfillment manapun, skip
             var offset = parseInt(calibOrderline, 10) - parseInt(positionToOwnLine[calibPos], 10);
             offsetVotes[offset] = (offsetVotes[offset] || 0) + 1;
@@ -729,17 +796,365 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
         var consistentOffset = (offsetKeys.length === 1) ? parseInt(offsetKeys[0], 10) : null;
 
         var map = {};
+        var positions = [];
+        var occurrenceUsed = {}; // itemId -> berapa kali item itu sudah dipetakan (buat item dobel)
         for (var pos2 in positionToItem) {
+            var posItemId = positionToItem[pos2];
+
             if (consistentOffset !== null) {
                 // Selisih konsisten -> hitung langsung, gak perlu peduli item dobel atau nggak
                 map[pos2] = String(parseInt(positionToOwnLine[pos2], 10) + consistentOffset);
             } else {
-                // Gak bisa kalibrasi (mis. semua item di TO ini kebetulan dobel) -> fallback
-                // ke pencocokan by-item (gak aman buat yang dobel, tapi lebih baik dari gak ada sama sekali)
-                map[pos2] = itemToOrderline[positionToItem[pos2]];
+                // Gak bisa kalibrasi (mis. yang cuma ke-ship baris item yang memang dobel) -> fallback
+                // pencocokan by-item. Kalau itemnya dobel, pakai orderline ke-N yang ditemukan
+                // (occurrence order) - lebih tepat daripada semua posisi ditimpuk ke orderline pertama.
+                var olList = itemToOrderlines[posItemId] || [];
+                var usedCount = occurrenceUsed[posItemId] || 0;
+                map[pos2] = (usedCount < olList.length) ? olList[usedCount] : olList[olList.length - 1];
+                occurrenceUsed[posItemId] = usedCount + 1;
+            }
+
+            positions.push({
+                pos: parseInt(pos2, 10),
+                item: posItemId,
+                ownLine: positionToOwnLine[pos2],
+                filteredPos: positionToFilteredPos[pos2] || null,
+                shippablePos: positionToShippablePos[pos2] || null,
+                orderline: (map[pos2] === undefined || map[pos2] === null) ? null : String(map[pos2])
+            });
+        }
+        positions.sort(function (a, b) { return a.pos - b.pos; });
+
+        // filteredMap/shippableMap: posisi HASIL FILTER (masing-masing kriteria) -> orderline.
+        // Ini buat nyocokkan sistem eksternal yang nomorin baris dengan cara nge-skip baris tertentu.
+        var filteredMap = {};
+        var shippableMap = {};
+        for (var fp = 0; fp < positions.length; fp++) {
+            if (positions[fp].orderline === null) continue;
+            if (positions[fp].filteredPos !== null) filteredMap[positions[fp].filteredPos] = positions[fp].orderline;
+            if (positions[fp].shippablePos !== null) shippableMap[positions[fp].shippablePos] = positions[fp].orderline;
+        }
+
+        return {
+            map: map,                     // posisi natural TO (1-based) -> orderline
+            filteredMap: filteredMap,     // posisi setelah skip baris full-received -> orderline
+            shippableMap: shippableMap,   // posisi setelah skip baris yang belum pernah di-ship -> orderline
+            positions: positions,         // detail per baris TO (pos, item, 'line' TO, orderline)
+            offset: consistentOffset,     // selisih terkalibrasi, null kalau gak konsisten
+            validOrderlines: validOrderlines // set orderline yang kebaca via metode transform (sama kayak eksekusi asli)
+        };
+    }
+
+    // =========================================================
+    // HELPER: Terjemahkan nomor baris dari CALLER -> orderline (nomor baris TO)
+    // =========================================================
+    // MASALAHNYA: 'line' yang dikirim caller itu nomor baris MILIK DOKUMEN CALLER, dan itu GAK
+    // selalu sama dengan posisi baris di sublist 'item' milik TO. Contoh nyata: caller ngirim
+    // line 3, 5, 12, 15 - padahal maksudnya baris ke-1, ke-3, ... di TO ("line 3 dianggap line 1"),
+    // karena nomor itu diambil dari dokumen re-order mereka. Kalau ditebak mentah sebagai posisi,
+    // 'line' bisa nyasar ke orderline yang salah - atau ke orderline milik ITEM YANG SAMA di baris
+    // lain - lalu baris yang harusnya ke-receive di-skip diam-diam dan response-nya cuma bilang
+    // "qty kurang / belum di-Ship" padahal barangnya ADA di fulfillment itu.
+    //
+    // SOLUSINYA: jangan tebak satu cara. Coba beberapa cara baca, lalu pakai yang hasilnya paling
+    // masuk akal - yaitu yang orderline hasil terjemahannya BENAR-BENAR ada di Item Fulfillment
+    // yang mau di-receive. Mode 'position' (perilaku lama) tetap menang kalau dia sudah cocok
+    // semua, jadi TO yang sekarang jalan gak berubah perilakunya.
+    //
+    // Caller juga bisa maksa mode lewat payload:
+    //   "line_mode": "position" | "orderline" | "if_line" | "to_line" | "item"
+    //   "line_offset": angka yang ditambahkan ke 'line' sebelum diterjemahkan
+    // Kalau dua-duanya kosong -> "auto" (deteksi otomatis).
+
+    // Baca nomor baris Item Fulfillment -> orderline. Caller yang ambil data dari GET item
+    // fulfilments ngirim 'line' versi IF ini (linesequencenumber), bukan posisi baris di TO.
+    function getFulfillmentOrderlineIndex(fulfillments) {
+        var idx = { ifLineToOrderline: {}, orderlines: {}, itemToOrderlines: {} };
+
+        function readLine(ifRec, fieldId, i) {
+            try {
+                return ifRec.getSublistValue({ sublistId: 'item', fieldId: fieldId, line: i });
+            } catch (e) {
+                return null; // field gak tersedia di sublist ini
             }
         }
-        return { map: map };
+
+        for (var f = 0; f < fulfillments.length; f++) {
+            try {
+                var ifRec = record.load({ type: record.Type.ITEM_FULFILLMENT, id: fulfillments[f].id, isDynamic: false });
+                var lineCount = ifRec.getLineCount({ sublistId: 'item' });
+
+                for (var i = 0; i < lineCount; i++) {
+                    var orderline = readLine(ifRec, 'orderline', i);
+                    if (orderline === '' || orderline === null || orderline === undefined) continue;
+
+                    var olKey = String(orderline);
+                    var itemKey = String(readLine(ifRec, 'item', i));
+                    idx.orderlines[olKey] = true;
+
+                    if (!idx.itemToOrderlines[itemKey]) idx.itemToOrderlines[itemKey] = [];
+                    if (idx.itemToOrderlines[itemKey].indexOf(olKey) === -1) {
+                        idx.itemToOrderlines[itemKey].push(olKey);
+                    }
+
+                    var ifLine = readLine(ifRec, 'line', i);
+                    if (ifLine !== '' && ifLine !== null && ifLine !== undefined && idx.ifLineToOrderline[String(ifLine)] === undefined) {
+                        idx.ifLineToOrderline[String(ifLine)] = olKey;
+                    }
+                }
+            } catch (e) {
+                log.error('LOAD IF ERROR', 'Fulfillment ' + fulfillments[f].id + ': ' + e.message);
+            }
+        }
+
+        return idx;
+    }
+
+    function resolveTransferOrderPayloadLines(transferOrderId, fulfillments, payloadItems, params) {
+        var needLine = [];
+        for (var i = 0; i < payloadItems.length; i++) {
+            var it = payloadItems[i];
+            var hasSeq = it.line_sequence !== undefined && it.line_sequence !== null;
+            if (hasSeq || it.line_id) continue;                          // key sudah stabil, biarkan
+            if (it.__lineRaw === undefined || it.__lineRaw === null) continue;
+            it.__payloadIndex = i;
+            needLine.push(it);
+        }
+        if (needLine.length === 0) return;
+
+        var toLineInfo = getTransferOrderLineMap(transferOrderId, fulfillments);
+        var posMap = toLineInfo.map || {};
+        var filteredPosMap = toLineInfo.filteredMap || {};
+        var shippablePosMap = toLineInfo.shippableMap || {};
+        var positions = toLineInfo.positions || [];
+        var validOrderlines = toLineInfo.validOrderlines || {};
+        var ifIndex = getFulfillmentOrderlineIndex(fulfillments);
+
+        // 'line' milik TO sendiri -> orderline (buat mode 'to_line')
+        var ownLineToOrderline = {};
+        for (var p = 0; p < positions.length; p++) {
+            if (positions[p].ownLine === null || positions[p].ownLine === undefined) continue;
+            if (positions[p].orderline === null) continue;
+            ownLineToOrderline[String(positions[p].ownLine)] = positions[p].orderline;
+        }
+
+        function makePositionResolver(offset) {
+            return function (rawLine) {
+                var n = parseInt(rawLine, 10);
+                if (isNaN(n)) return null;
+                var ol = posMap[n + offset];
+                return (ol === undefined || ol === null) ? null : String(ol);
+            };
+        }
+
+        // Sistem eksternal ada yang cuma nampilin baris yang BELUM full-received, dinomorin ulang
+        // dari 1 (baris yang qty-nya udah full ke-receive di-skip, gak dihitung). Beda dari posisi
+        // natural TO (yang ngitung SEMUA baris termasuk yang udah full-received).
+        function makeFilteredPositionResolver(offset) {
+            return function (rawLine) {
+                var n = parseInt(rawLine, 10);
+                if (isNaN(n)) return null;
+                var ol = filteredPosMap[n + offset];
+                return (ol === undefined || ol === null) ? null : String(ol);
+            };
+        }
+
+        // Variasi lain: sistem eksternal ada yang cuma nampilin baris yang UDAH pernah di-Fulfill
+        // (shipped) - baris yang Fulfilled=0 (belum pernah dikirim sama sekali) di-skip total dari
+        // nomor eksternal, dinomorin ulang dari 1 buat sisanya.
+        function makeShippablePositionResolver(offset) {
+            return function (rawLine) {
+                var n = parseInt(rawLine, 10);
+                if (isNaN(n)) return null;
+                var ol = shippablePosMap[n + offset];
+                return (ol === undefined || ol === null) ? null : String(ol);
+            };
+        }
+
+        function makeOrderlineResolver(offset) {
+            return function (rawLine) {
+                var n = parseInt(rawLine, 10);
+                return isNaN(n) ? null : String(n + offset);
+            };
+        }
+
+        function makeTableResolver(table) {
+            return function (rawLine) {
+                var ol = table[String(rawLine)];
+                return (ol === undefined || ol === null) ? null : String(ol);
+            };
+        }
+
+        // Cocokkan lewat identitas item (cuma kalau itemnya GAK dobel - kalau dobel, ambigu)
+        function makeItemResolver() {
+            return function (rawLine, payloadItem) {
+                if (!payloadItem || payloadItem.item === undefined || payloadItem.item === null) return null;
+                var list = ifIndex.itemToOrderlines[String(payloadItem.item)];
+                return (list && list.length === 1) ? list[0] : null;
+            };
+        }
+
+        // ---- Susun daftar kandidat mode ----
+        var forcedMode = params.line_mode ? String(params.line_mode) : null;
+        var forcedOffset = (params.line_offset === undefined || params.line_offset === null || params.line_offset === '') ? 0 : parseInt(params.line_offset, 10);
+        if (isNaN(forcedOffset)) forcedOffset = 0;
+
+        var candidates = [];
+
+        if (forcedMode) {
+            var forced = null;
+            if (forcedMode === 'position') forced = makePositionResolver(forcedOffset);
+            else if (forcedMode === 'filtered_position') forced = makeFilteredPositionResolver(forcedOffset);
+            else if (forcedMode === 'shippable_position') forced = makeShippablePositionResolver(forcedOffset);
+            else if (forcedMode === 'orderline') forced = makeOrderlineResolver(forcedOffset);
+            else if (forcedMode === 'if_line') forced = makeTableResolver(ifIndex.ifLineToOrderline);
+            else if (forcedMode === 'to_line') forced = makeTableResolver(ownLineToOrderline);
+            else if (forcedMode === 'item') forced = makeItemResolver();
+            else if (forcedMode !== 'auto') {
+                throw new Error("'line_mode' tidak dikenal: '" + forcedMode + "'. Pakai 'position', 'filtered_position', 'shippable_position', 'orderline', 'if_line', 'to_line', 'item', atau 'auto'.");
+            }
+
+            if (forced) {
+                candidates.push({ name: forcedMode + (forcedOffset ? ' (offset ' + forcedOffset + ')' : ''), resolve: forced });
+            }
+        }
+
+        if (candidates.length === 0) {
+            // 'position' HARUS paling depan - kalau dia udah cocok semua, dia yang dipakai (backward compatible)
+            candidates.push({ name: 'position', resolve: makePositionResolver(0) });
+            candidates.push({ name: 'filtered_position', resolve: makeFilteredPositionResolver(0) });
+            candidates.push({ name: 'shippable_position', resolve: makeShippablePositionResolver(0) });
+            candidates.push({ name: 'orderline', resolve: makeOrderlineResolver(0) });
+            candidates.push({ name: 'if_line', resolve: makeTableResolver(ifIndex.ifLineToOrderline) });
+            candidates.push({ name: 'to_line', resolve: makeTableResolver(ownLineToOrderline) });
+            candidates.push({ name: 'item', resolve: makeItemResolver() });
+
+            for (var k = 1; k <= 8; k++) {
+                candidates.push({ name: 'position+' + k, resolve: makePositionResolver(k) });
+                candidates.push({ name: 'position-' + k, resolve: makePositionResolver(-k) });
+                candidates.push({ name: 'filtered_position+' + k, resolve: makeFilteredPositionResolver(k) });
+                candidates.push({ name: 'filtered_position-' + k, resolve: makeFilteredPositionResolver(-k) });
+                candidates.push({ name: 'shippable_position+' + k, resolve: makeShippablePositionResolver(k) });
+                candidates.push({ name: 'shippable_position-' + k, resolve: makeShippablePositionResolver(-k) });
+                candidates.push({ name: 'orderline+' + k, resolve: makeOrderlineResolver(k) });
+                candidates.push({ name: 'orderline-' + k, resolve: makeOrderlineResolver(-k) });
+            }
+        }
+
+        // ---- Nilai tiap kandidat ----
+        function scoreCandidate(cand) {
+            var seen = {}, hit = 0, resolvedCount = 0, duplicate = false;
+            for (var i = 0; i < needLine.length; i++) {
+                var ol = cand.resolve(needLine[i].__lineRaw, needLine[i]);
+                if (ol === null || ol === undefined || ol === '') continue;
+                resolvedCount++;
+                if (seen[ol]) duplicate = true;
+                seen[ol] = true;
+                // validOrderlines (dari metode transform, SAMA kayak eksekusi asli) - BUKAN
+                // ifIndex.orderlines (dari record.load ITEM_FULFILLMENT, TERBUKTI bisa beda angka).
+                if (validOrderlines[ol]) hit++;
+            }
+            return { hit: hit, resolvedCount: resolvedCount, duplicate: duplicate };
+        }
+
+        var chosen = null, chosenScore = null;
+        for (var c = 0; c < candidates.length; c++) {
+            var sc = scoreCandidate(candidates[c]);
+            if (chosen === null) { chosen = candidates[c]; chosenScore = sc; continue; }
+
+            // Kandidat cuma menang kalau JELAS lebih baik - kalau seri, yang lebih depan (position) tetap dipakai
+            var better = false;
+            if (sc.hit > chosenScore.hit) better = true;
+            else if (sc.hit === chosenScore.hit) {
+                if (sc.resolvedCount > chosenScore.resolvedCount) better = true;
+                else if (sc.resolvedCount === chosenScore.resolvedCount && chosenScore.duplicate && !sc.duplicate) better = true;
+            }
+            if (better) { chosen = candidates[c]; chosenScore = sc; }
+        }
+
+        // ---- Terapkan + validasi ----
+        var applied = [];
+        var notShipped = [];
+        for (var r = 0; r < needLine.length; r++) {
+            var ol2 = chosen.resolve(needLine[r].__lineRaw, needLine[r]);
+            if (ol2 === null || ol2 === undefined || ol2 === '') {
+                throw new Error("Item array index " + needLine[r].__payloadIndex + ": 'line' " + needLine[r].__lineRaw +
+                    " gak bisa diterjemahkan ke orderline Transfer Order " + transferOrderId + " (mode: " + chosen.name + "). " +
+                    "Kirim 'line_sequence'/'line_id' dari GET response, atau set 'line_mode'/'line_offset'.");
+            }
+            needLine[r].line_sequence = ol2;
+            applied.push(needLine[r].__lineRaw + '->' + ol2);
+            if (!validOrderlines[ol2]) notShipped.push(needLine[r].__lineRaw + '->' + ol2);
+        }
+
+        log.audit('LINE MAP', 'mode: ' + chosen.name +
+            ' | cocok di fulfillment: ' + chosenScore.hit + '/' + needLine.length +
+            ' | ' + applied.join(', '));
+
+        if (chosenScore.duplicate) {
+            log.error('LINE MAP DUPLICATE', 'Lebih dari satu payload item diterjemahkan ke orderline yang sama (mode: ' +
+                chosen.name + '): ' + applied.join(', ') + '. Kirim ' + "'line_sequence'/'line_id' biar eksplisit.");
+        }
+        if (notShipped.length > 0) {
+            log.audit('LINE NOT SHIPPED', 'Orderline ini gak ada di Item Fulfillment manapun: ' + notShipped.join(', '));
+        }
+    }
+
+    // =========================================================
+    // HELPER: Validasi ketersediaan SEBELUM bikin Item Receipt apapun (all-or-nothing)
+    // =========================================================
+    // Semua fulfillment_id udah diketahui dari awal (findEligibleFulfillments), jadi kita bisa
+    // transform read-only (isDynamic:false, TANPA save) ke SEMUA fulfillment dulu, jumlahin total
+    // qty yang tersedia per baris yang diminta, dan bandingkan sama qty yang diminta - SEBELUM
+    // nyentuh save() sama sekali. Kalau kurang di baris manapun, TOLAK semuanya dari awal - gak ada
+    // Item Receipt yang kebuat sama sekali (all-or-nothing), bukan "sebagian berhasil, sebagian kurang".
+    function validateTransferOrderAvailability(transferOrderId, fulfillments, payloadItems, payloadMap) {
+        var totalAvailable = {}; // key: line_sequence (orderline) -> total qty tersedia gabungan semua fulfillment
+
+        for (var f = 0; f < fulfillments.length; f++) {
+            var preview = record.transform({
+                fromType: record.Type.TRANSFER_ORDER,
+                fromId: transferOrderId,
+                toType: record.Type.ITEM_RECEIPT,
+                isDynamic: false,
+                defaultValues: { itemfulfillment: fulfillments[f].id }
+            });
+            var lineCount = preview.getLineCount({ sublistId: 'item' });
+            for (var i = 0; i < lineCount; i++) {
+                var orderline = preview.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: i });
+                var lineSeq = preview.getSublistValue({ sublistId: 'item', fieldId: 'line', line: i });
+                var itemData = matchPayloadItem(payloadMap, i + 1, orderline, lineSeq, transferOrderId);
+                if (!itemData) continue;
+
+                var qty = parseFloat(preview.getSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i })) || 0;
+                var key = itemData.line_sequence !== undefined ? String(itemData.line_sequence) : String(itemData.line_id);
+                totalAvailable[key] = (totalAvailable[key] || 0) + qty;
+            }
+        }
+
+        var shortfalls = [];
+        for (var x = 0; x < payloadItems.length; x++) {
+            var pItem = payloadItems[x];
+            var requested = (pItem.quantity !== undefined && pItem.quantity !== null) ? (parseFloat(pItem.quantity) || 0) : null;
+            if (requested === null) continue; // gak ada qty eksplisit -> ambil semua yang ada, gak perlu divalidasi
+
+            var key2 = pItem.line_sequence !== undefined ? String(pItem.line_sequence) : String(pItem.line_id);
+            var avail = totalAvailable[key2] || 0;
+            if (avail < requested) {
+                var refLine = pItem.__lineRaw !== undefined
+                    ? ('line ' + pItem.__lineRaw + ' -> orderline ' + key2)
+                    : ('line_id ' + (pItem.line_id || '-'));
+                shortfalls.push('index ' + x + ' (' + refLine + ', diminta ' + requested + ', tersedia ' + avail + ')');
+            }
+        }
+
+        if (shortfalls.length > 0) {
+            throw new Error(
+                "Qty yang diminta melebihi total yang tersedia di seluruh Item Fulfillment Transfer Order " +
+                transferOrderId + " - TIDAK ADA Item Receipt yang dibuat sama sekali: " + shortfalls.join('; ') +
+                ". Kemungkinan sisanya belum di-Ship dari lokasi asal."
+            );
+        }
     }
 
     // =========================================================
@@ -760,8 +1175,6 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
         }
 
         if (payloadItems && payloadItems.length > 0) {
-            var toLineMap = null; // lazy-load, cuma kalau ada payload item yang pakai 'line' posisional
-
             for (var k = 0; k < payloadItems.length; k++) {
                 var item = payloadItems[k];
 
@@ -772,28 +1185,29 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                     throw new Error("Item array index " + k + ": 'serials' tidak didukung lewat 'transfer_order_id' kalau qty-nya bisa ke-split ke beberapa Item Fulfillment. Kirim 'fulfillment_id' + 'transfer_order_id' spesifik buat baris ini.");
                 }
 
-                // 'line' (posisi) GAK reliable buat auto-split multi-fulfillment - resolve ke
-                // 'line_sequence' (orderline) asli lewat getTransferOrderLineMap() (posisi natural
-                // TO + orderline gabungan semua fulfillment), lalu buang 'line' biar gak ada
-                // matching berbasis posisi sama sekali di jalur ini.
-                if ((item.line_sequence === undefined || item.line_sequence === null) && !item.line_id
-                    && item.line !== undefined && item.line !== null) {
-                    if (!toLineMap) toLineMap = getTransferOrderLineMap(transferOrderId, fulfillments);
-
-                    var resolvedSeq = toLineMap.map[parseInt(item.line, 10)];
-                    if (resolvedSeq === undefined) {
-                        throw new Error("Item array index " + k + ": 'line' " + item.line + " gak ketemu di Transfer Order " + transferOrderId + ".");
-                    }
-                    item.line_sequence = resolvedSeq;
-                }
+                // 'line' disimpan dulu buat diagnostik (dipakai di response kalau ada yang kurang),
+                // lalu dibuang - di jalur auto-split ini matching HARUS lewat 'line_sequence'
+                // (orderline), karena posisi baris gak stabil antar Item Fulfillment.
+                if (item.line !== undefined && item.line !== null) item.__lineRaw = item.line;
                 delete item.line;
 
                 var hasExplicitQty = item.quantity !== undefined && item.quantity !== null;
                 item.__remaining = hasExplicitQty ? (parseFloat(item.quantity) || 0) : Infinity;
             }
+
+            // Terjemahkan 'line' caller -> orderline (nomor baris TO). 'line' caller TIDAK selalu
+            // sama dengan posisi baris di TO - lihat catatan panjang di resolveTransferOrderPayloadLines().
+            resolveTransferOrderPayloadLines(transferOrderId, fulfillments, payloadItems, params);
         }
 
         var payloadMap = buildPayloadMap(payloadItems);
+
+        // Validasi dulu SEBELUM bikin Item Receipt apapun - kalau total ketersediaan gabungan
+        // semua fulfillment gak cukup, TOLAK dari awal (all-or-nothing), bukan bikin sebagian
+        // lalu baru ketauan kurang belakangan.
+        if (payloadItems && payloadItems.length > 0) {
+            validateTransferOrderAvailability(transferOrderId, fulfillments, payloadItems, payloadMap);
+        }
 
         var responseData = [];
 
@@ -845,7 +1259,12 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
             for (var x = 0; x < payloadItems.length; x++) {
                 var remaining = payloadItems[x].__remaining;
                 if (remaining === Infinity || remaining > 0) {
-                    shortfalls.push('index ' + x + ' (kurang ' + (remaining === Infinity ? 'semua' : remaining) + ')');
+                    // Sertakan 'line' asli dari caller + orderline hasil terjemahannya, biar kalau
+                    // ternyata mapping-nya yang salah kelihatan dari response (bukan cuma "kurang").
+                    var refLine = payloadItems[x].__lineRaw !== undefined
+                        ? ('line ' + payloadItems[x].__lineRaw + ' -> orderline ' + (payloadItems[x].line_sequence !== undefined ? payloadItems[x].line_sequence : '-'))
+                        : ('line_id ' + (payloadItems[x].line_id || '-'));
+                    shortfalls.push('index ' + x + ' (' + refLine + ', kurang ' + (remaining === Infinity ? 'semua' : remaining) + ')');
                 }
             }
             throw new Error(
@@ -962,12 +1381,16 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                     // Test getTransferOrderLineMap() versi baru (posisi natural TO + orderline
                     // gabungan semua fulfillment, dicocokkan per item).
                     var fulfillmentsForMap = findEligibleFulfillments(params.transfer_order_id);
+                    var ifLineIndex = getFulfillmentOrderlineIndex(fulfillmentsForMap);
                     return {
                         success: true,
                         debug: true,
                         transfer_order_id: params.transfer_order_id,
                         fulfillments_used: fulfillmentsForMap,
-                        to_line_map: getTransferOrderLineMap(params.transfer_order_id, fulfillmentsForMap)
+                        to_line_map: getTransferOrderLineMap(params.transfer_order_id, fulfillmentsForMap),
+                        // Buat cek konvensi nomor baris caller: nomor baris Item Fulfillment -> orderline
+                        fulfillment_lines: ifLineIndex.ifLineToOrderline,
+                        orderlines_in_fulfillments: Object.keys(ifLineIndex.orderlines)
                     };
                 }
                 return inspectTransferOrder(params.transfer_order_id, params.fulfillment_id);
