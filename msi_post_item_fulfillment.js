@@ -12,38 +12,55 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
 
         try {
 
-            var soId = context.sales_order_id;
-            var toId = context.transfer_order_id;
-            var vrId = context.vendor_return_id;
+            var fulfillment;
 
-            // Deteksi tipe order: SO atau TO atau VR
-            var sourceId, sourceType, isTransferOrder;
+            // 🔥 MODE UPDATE: kalau "id" (internal id Item Fulfillment yang sudah ada) dikirim,
+            // load record itu langsung - TIDAK perlu transform lagi. record.load() bekerja sama
+            // untuk semua tipe record NetSuite, terlepas dari record itu awalnya dibuat lewat
+            // record.create() atau record.transform() - jadi mekanismenya SAMA dengan script
+            // lain (mis. msi_post_sales_order.js) yang juga pakai pola "ada id -> load, kalau
+            // tidak -> create/transform". Yang beda antar tipe cuma nama field & sublist-nya,
+            // bukan mekanisme update-nya.
+            if (context.id) {
 
-            if (soId) {
-                sourceId = soId;
-                sourceType = record.Type.SALES_ORDER;
-                isTransferOrder = false;
-            } else if (toId) {
-                sourceId = toId;
-                sourceType = record.Type.TRANSFER_ORDER;
-                isTransferOrder = true;
-            } else if (vrId) {
-                sourceId = vrId;
-                sourceType = record.Type.VENDOR_RETURN_AUTHORIZATION;
-                isTransferOrder = false;
+                fulfillment = record.load({
+                    type: record.Type.ITEM_FULFILLMENT,
+                    id: context.id,
+                    isDynamic: true
+                });
+
             } else {
-                return {
-                    status: 'error',
-                    message: 'sales_order_id, transfer_order_id, atau vendor_return_id harus diisi'
-                };
-            }
 
-            var fulfillment = record.transform({
-                fromType: sourceType,
-                fromId: sourceId,
-                toType: record.Type.ITEM_FULFILLMENT,
-                isDynamic: true
-            });
+                var soId = context.sales_order_id;
+                var toId = context.transfer_order_id;
+                var vrId = context.vendor_return_id;
+
+                // Deteksi tipe order: SO atau TO atau VR
+                var sourceId, sourceType;
+
+                if (soId) {
+                    sourceId = soId;
+                    sourceType = record.Type.SALES_ORDER;
+                } else if (toId) {
+                    sourceId = toId;
+                    sourceType = record.Type.TRANSFER_ORDER;
+                } else if (vrId) {
+                    sourceId = vrId;
+                    sourceType = record.Type.VENDOR_RETURN_AUTHORIZATION;
+                } else {
+                    return {
+                        status: 'error',
+                        message: '"id" (untuk update Item Fulfillment yang sudah ada) atau salah satu dari sales_order_id, transfer_order_id, vendor_return_id (untuk membuat baru) harus diisi'
+                    };
+                }
+
+                fulfillment = record.transform({
+                    fromType: sourceType,
+                    fromId: sourceId,
+                    toType: record.Type.ITEM_FULFILLMENT,
+                    isDynamic: true
+                });
+            }
 
             // 🔥 Opsional: User bisa ganti custom form
             if (context.customform) {
@@ -99,14 +116,24 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 sublistId: 'item'
             });
 
+            var isUpdateMode = !!context.id;
+
             var hasValidLine = false;
 
             var payloadItems = context.items || [];
 
+            // 🔥 MODE UPDATE tanpa "items": anggap ini update header-only (mis. cuma ganti memo /
+            // custom field) - jangan sentuh sublist 'item' sama sekali, biar baris yang sudah
+            // di-fulfill sebelumnya TIDAK ikut ter-uncheck.
+            var skipLineLoop = isUpdateMode && payloadItems.length === 0;
+            if (skipLineLoop) {
+                hasValidLine = true;
+            }
+
             // =========================
             // 🔥 LOOP LINE NETSUITE
             // =========================
-            for (var i = 0; i < lineCount; i++) {
+            for (var i = 0; !skipLineLoop && i < lineCount; i++) {
 
                 fulfillment.selectLine({
                     sublistId: 'item',
@@ -124,12 +151,16 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 });
 
                 if (qtyRemaining <= 0) {
-                    // FIX Bug 1: explicitly deselect — transform sets itemreceive=true by default
-                    fulfillment.setCurrentSublistValue({
-                        sublistId: 'item',
-                        fieldId: 'itemreceive',
-                        value: false
-                    });
+                    // FIX Bug 1: explicitly deselect — transform sets itemreceive=true by default.
+                    // Di mode update, baris yang sudah punya status (dari save sebelumnya) dibiarkan
+                    // apa adanya - jangan dipaksa uncheck.
+                    if (!isUpdateMode) {
+                        fulfillment.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'itemreceive',
+                            value: false
+                        });
+                    }
                     fulfillment.commitLine({ sublistId: 'item' });
                     continue;
                 }
@@ -151,13 +182,17 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 }
 
                 // kalau tidak ada di payload → skip
-                // FIX Bug 1: explicitly deselect — transform sets itemreceive=true by default
+                // FIX Bug 1: explicitly deselect — transform sets itemreceive=true by default.
+                // Di mode update, baris yang gak disebut di payload dibiarkan apa adanya - hanya
+                // baris yang eksplisit dikirim di "items" yang diubah.
                 if (!matchedItem) {
-                    fulfillment.setCurrentSublistValue({
-                        sublistId: 'item',
-                        fieldId: 'itemreceive',
-                        value: false
-                    });
+                    if (!isUpdateMode) {
+                        fulfillment.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'itemreceive',
+                            value: false
+                        });
+                    }
                     fulfillment.commitLine({ sublistId: 'item' });
                     continue;
                 }
@@ -228,70 +263,88 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 // =========================
                 // 🔥 INVENTORY DETAIL
                 // =========================
-                if (needInvDetail && serials.length > 0) {
+                if (needInvDetail) {
 
                     var inventoryDetail = fulfillment.getCurrentSublistSubrecord({
                         sublistId: 'item',
                         fieldId: 'inventorydetail'
                     });
 
-                    // Hapus line default yang ditarik oleh NetSuite (jika ada)
-                    // agar tidak bentrok dengan serial dari API
-                    var existingDetailLines = inventoryDetail.getLineCount({
-                        sublistId: 'inventoryassignment'
-                    });
-                    for (var r = existingDetailLines - 1; r >= 0; r--) {
-                        inventoryDetail.removeLine({
-                            sublistId: 'inventoryassignment',
-                            line: r
-                        });
-                    }
+                    if (serials.length > 0) {
 
-                    for (var s = 0; s < serials.length; s++) {
-
-                        var sn = serials[s];
-
-                        inventoryDetail.selectNewLine({
+                        // Hapus line default yang ditarik oleh NetSuite (jika ada)
+                        // agar tidak bentrok dengan serial dari API
+                        var existingDetailLines = inventoryDetail.getLineCount({
                             sublistId: 'inventoryassignment'
                         });
-
-                        try {
-                            inventoryDetail.setCurrentSublistText({
+                        for (var r = existingDetailLines - 1; r >= 0; r--) {
+                            inventoryDetail.removeLine({
                                 sublistId: 'inventoryassignment',
-                                fieldId: 'issueinventorynumber',
-                                text: String(sn)
-                            });
-                        } catch (e) {
-                            inventoryDetail.setCurrentSublistValue({
-                                sublistId: 'inventoryassignment',
-                                fieldId: 'issueinventorynumber',
-                                value: sn
+                                line: r
                             });
                         }
 
-                        // Set Inventory Status jika diaktifkan (Default: 1 / Good)
-                        // Inilah field "Status" yang membuat error di baris 191
-                        var invStatus = matchedItem.inventorystatus || 1;
-                        try {
+                        for (var s = 0; s < serials.length; s++) {
+
+                            var sn = serials[s];
+
+                            inventoryDetail.selectNewLine({
+                                sublistId: 'inventoryassignment'
+                            });
+
+                            try {
+                                inventoryDetail.setCurrentSublistText({
+                                    sublistId: 'inventoryassignment',
+                                    fieldId: 'issueinventorynumber',
+                                    text: String(sn)
+                                });
+                            } catch (e) {
+                                inventoryDetail.setCurrentSublistValue({
+                                    sublistId: 'inventoryassignment',
+                                    fieldId: 'issueinventorynumber',
+                                    value: sn
+                                });
+                            }
+
+                            // Set Inventory Status jika diaktifkan (Default: 1 / Good)
+                            // Inilah field "Status" yang membuat error di baris 191
+                            var invStatus = matchedItem.inventorystatus || 1;
+                            try {
+                                inventoryDetail.setCurrentSublistValue({
+                                    sublistId: 'inventoryassignment',
+                                    fieldId: 'inventorystatus',
+                                    value: invStatus
+                                });
+                            } catch (statusErr) {
+                                // Abaikan jika fitur Inventory Status tidak dipakai,
+                                // error yang lebih spesifik akan ditangkap saat commitLine jika memang wajib.
+                            }
+
                             inventoryDetail.setCurrentSublistValue({
                                 sublistId: 'inventoryassignment',
-                                fieldId: 'inventorystatus',
-                                value: invStatus
+                                fieldId: 'quantity',
+                                value: 1
                             });
-                        } catch (statusErr) {
-                            // Abaikan jika fitur Inventory Status tidak dipakai, 
-                            // error yang lebih spesifik akan ditangkap saat commitLine jika memang wajib.
+
+                            inventoryDetail.commitLine({
+                                sublistId: 'inventoryassignment'
+                            });
                         }
 
-                        inventoryDetail.setCurrentSublistValue({
-                            sublistId: 'inventoryassignment',
-                            fieldId: 'quantity',
-                            value: 1
-                        });
+                    } else {
 
-                        inventoryDetail.commitLine({
-                            sublistId: 'inventoryassignment'
-                        });
+                        // 🔥 Item butuh inventory detail TAPI TIDAK pakai serial/lot number (mis.
+                        // cuma fitur "Multiple Inventory Status" - baris detail cuma punya
+                        // Status + Quantity, tanpa identitas unik). Kalau ini dibiarkan, waktu
+                        // qtyToFulfill diubah (mis. update qty 10 -> 11) tapi baris inventory detail
+                        // yang lama masih total 10, NetSuite tolak: "Please configure the inventory
+                        // detail in line X". Jadi total quantity di inventory detail perlu
+                        // disamakan (reconcile) ke qtyToFulfill yang baru.
+                        reconcileInventoryDetailQuantity(
+                            inventoryDetail,
+                            qtyToFulfill,
+                            matchedItem.inventorystatus || 1
+                        );
                     }
                 }
 
@@ -307,30 +360,42 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 };
             }
 
-            // Set Status sebelum di save
-            var statusStr = (context.ship_status || context.shipstatus || 'shipped').toLowerCase();
-            var statusCode = statusStr === 'picked' ? 'A' : statusStr === 'packed' ? 'B' : 'C';
-            var statusText = statusStr === 'picked' ? 'Picked' : statusStr === 'packed' ? 'Packed' : 'Shipped';
+            // Set Status sebelum di save.
+            // Mode update: kalau caller gak eksplisit kirim ship_status, JANGAN dipaksa ke
+            // 'shipped' - biarkan status yang sudah ada di record. Di mode create, default 'shipped'
+            // tetap dipertahankan (perilaku lama).
+            var explicitStatus = context.ship_status || context.shipstatus;
+            var statusStr = (explicitStatus || (isUpdateMode ? null : 'shipped'));
 
-            try {
-                fulfillment.setValue({
-                    fieldId: 'shipstatus',
-                    value: statusCode
-                });
-            } catch (e) {
+            if (statusStr) {
+                statusStr = statusStr.toLowerCase();
+                var statusCode = statusStr === 'picked' ? 'A' : statusStr === 'packed' ? 'B' : 'C';
+                var statusText = statusStr === 'picked' ? 'Picked' : statusStr === 'packed' ? 'Packed' : 'Shipped';
+
                 try {
-                    fulfillment.setText({
+                    fulfillment.setValue({
                         fieldId: 'shipstatus',
-                        text: statusText
+                        value: statusCode
                     });
-                } catch (e2) {
-                    log.error('SET SHIPSTATUS ERROR', e2.message);
+                } catch (e) {
+                    try {
+                        fulfillment.setText({
+                            fieldId: 'shipstatus',
+                            text: statusText
+                        });
+                    } catch (e2) {
+                        log.error('SET SHIPSTATUS ERROR', e2.message);
+                    }
                 }
             }
 
             // 🔥 Auto-Approve: set approval status ke 'Approved' sebelum save
-            // Kirim "auto_approve": false di payload jika tidak ingin auto-approve
-            var shouldAutoApprove = context.auto_approve !== false;
+            // Mode create: default true (perilaku lama) - kirim "auto_approve": false untuk skip.
+            // Mode update: default FALSE (jangan sentuh approval yang sudah ada) - kirim
+            // "auto_approve": true secara eksplisit kalau memang mau approve saat update.
+            var shouldAutoApprove = isUpdateMode
+                ? context.auto_approve === true
+                : context.auto_approve !== false;
             if (shouldAutoApprove) {
                 try {
                     fulfillment.setValue({ fieldId: 'approvalstatus', value: 'A' }); // A = Approved
@@ -421,6 +486,74 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 status: 'error',
                 message: e.message
             };
+        }
+    }
+
+    // =========================================================
+    // HELPER: Samakan (reconcile) total quantity inventory detail dengan qty baris,
+    // untuk item yang butuh inventory detail TAPI TIDAK pakai serial/lot number
+    // (mis. cuma "Multiple Inventory Status" - baris detail cuma Status + Quantity).
+    // =========================================================
+    function reconcileInventoryDetailQuantity(inventoryDetail, targetQty, defaultStatus) {
+
+        var lineCount = inventoryDetail.getLineCount({ sublistId: 'inventoryassignment' });
+
+        if (lineCount === 0) {
+            // Belum ada baris detail sama sekali -> buat 1 baris untuk seluruh qty
+            inventoryDetail.selectNewLine({ sublistId: 'inventoryassignment' });
+            try {
+                inventoryDetail.setCurrentSublistValue({
+                    sublistId: 'inventoryassignment',
+                    fieldId: 'inventorystatus',
+                    value: defaultStatus
+                });
+            } catch (e) {
+                // Abaikan jika fitur Inventory Status tidak aktif untuk item ini
+            }
+            inventoryDetail.setCurrentSublistValue({
+                sublistId: 'inventoryassignment',
+                fieldId: 'quantity',
+                value: targetQty
+            });
+            inventoryDetail.commitLine({ sublistId: 'inventoryassignment' });
+            return;
+        }
+
+        var currentTotal = 0;
+        for (var i = 0; i < lineCount; i++) {
+            currentTotal += parseFloat(inventoryDetail.getSublistValue({
+                sublistId: 'inventoryassignment',
+                fieldId: 'quantity',
+                line: i
+            })) || 0;
+        }
+
+        var delta = targetQty - currentTotal;
+        if (delta === 0) return;
+
+        // Selisihnya ditambahkan/dikurangkan ke baris TERAKHIR - paling simpel, gak perlu tau
+        // baris mana yang "benar" kalau kebetulan ada lebih dari 1 status.
+        var lastIndex = lineCount - 1;
+        inventoryDetail.selectLine({ sublistId: 'inventoryassignment', line: lastIndex });
+        var lastQty = parseFloat(inventoryDetail.getCurrentSublistValue({
+            sublistId: 'inventoryassignment',
+            fieldId: 'quantity'
+        })) || 0;
+        var newQty = lastQty + delta;
+
+        if (newQty <= 0) {
+            // Pengurangan bikin baris terakhir jadi <=0 -> hapus baris itu. Kasus qty berkurang
+            // banyak sekaligus baris status > 1 gak ditangani sepenuhnya di sini - cukup jarang
+            // terjadi (biasanya cuma 1 baris status per baris fulfillment).
+            inventoryDetail.cancelLine({ sublistId: 'inventoryassignment' });
+            inventoryDetail.removeLine({ sublistId: 'inventoryassignment', line: lastIndex });
+        } else {
+            inventoryDetail.setCurrentSublistValue({
+                sublistId: 'inventoryassignment',
+                fieldId: 'quantity',
+                value: newQty
+            });
+            inventoryDetail.commitLine({ sublistId: 'inventoryassignment' });
         }
     }
 

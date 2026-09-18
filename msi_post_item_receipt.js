@@ -399,6 +399,227 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
     }
 
     // =========================================================
+    // HELPER: Update baris item di 1 Item Receipt YANG SUDAH ADA (mode update, dipanggil dari
+    // updateItemReceipt()). BEDA dari processReceiptLines/processReceiptLinesStandard (dipakai pas
+    // create/transform): baris yang TIDAK disebut di payload dibiarkan apa adanya - TIDAK ikut
+    // di-uncheck. 'itemreceive' juga tidak disentuh di sini (itu flag saat create, ngubahnya di
+    // record yang udah tersimpan gak relevan/gak didukung NetSuite) - cuma field yang aman diubah
+    // setelah save (qty, location/department/class, unitcost, custcol_*) yang di-set.
+    // =========================================================
+    function updateReceiptLines(itemReceipt, payloadMap) {
+        var lineCount = itemReceipt.getLineCount({ sublistId: 'item' });
+        var itemUpdated = 0;
+
+        for (var i = 0; i < lineCount; i++) {
+            var orderline = itemReceipt.getSublistValue({ sublistId: 'item', fieldId: 'orderline', line: i });
+            var lineSeq = itemReceipt.getSublistValue({ sublistId: 'item', fieldId: 'line', line: i });
+            var lineNum = i + 1;
+
+            var itemData = matchPayloadItem(payloadMap, lineNum, orderline, lineSeq, null);
+            if (!itemData) continue; // baris yang gak disebut di payload dibiarkan apa adanya
+
+            itemReceipt.selectLine({ sublistId: 'item', line: i });
+
+            var needInvDetail = itemReceipt.getCurrentSublistValue({ sublistId: 'item', fieldId: 'inventorydetailreq' });
+            var serials = itemData.serials || [];
+
+            // Kalau serials dikirim, qty ngikut jumlah serial (1 serial = 1 unit) - sama seperti
+            // jalur create. Kalau enggak, pakai "quantity" dari payload apa adanya.
+            var qtyToSet;
+            if (serials.length > 0) {
+                qtyToSet = serials.length;
+            } else if (itemData.quantity !== undefined && itemData.quantity !== null) {
+                qtyToSet = parseFloat(itemData.quantity) || 0;
+            }
+
+            if (qtyToSet !== undefined) {
+                itemReceipt.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: qtyToSet });
+            }
+
+            ['location', 'department', 'class'].forEach(function (f) {
+                if (itemData[f] !== undefined && itemData[f] !== null) {
+                    itemReceipt.setCurrentSublistValue({ sublistId: 'item', fieldId: f, value: itemData[f] });
+                }
+            });
+
+            if (itemData.rate !== undefined && itemData.rate !== null) {
+                itemReceipt.setCurrentSublistValue({ sublistId: 'item', fieldId: 'unitcost', value: itemData.rate });
+            }
+
+            for (var lineKey in itemData) {
+                if (lineKey.indexOf('custcol') === 0) {
+                    try {
+                        itemReceipt.setCurrentSublistValue({
+                            sublistId: 'item', fieldId: lineKey, value: itemData[lineKey]
+                        });
+                    } catch (e) {
+                        log.error('SET CUSTCOL ERROR', lineKey + ': ' + e.message);
+                    }
+                }
+            }
+
+            // 🔥 Item butuh inventory detail (serial/lot number ATAU cuma "Multiple Inventory
+            // Status") - kalau qty baris berubah, inventory detail-nya harus ikut disesuaikan,
+            // kalau tidak NetSuite tolak: "Please configure the inventory detail in line X".
+            if (needInvDetail) {
+                var inventoryDetail = itemReceipt.getCurrentSublistSubrecord({
+                    sublistId: 'item', fieldId: 'inventorydetail'
+                });
+
+                if (serials.length > 0) {
+                    // Replace TOTAL - baris lama dihapus semua, diisi ulang persis dari serials
+                    // yang dikirim (bukan ditambahkan/append).
+                    var existingDetailLines = inventoryDetail.getLineCount({ sublistId: 'inventoryassignment' });
+                    for (var r = existingDetailLines - 1; r >= 0; r--) {
+                        inventoryDetail.removeLine({ sublistId: 'inventoryassignment', line: r });
+                    }
+
+                    for (var s = 0; s < serials.length; s++) {
+                        inventoryDetail.selectNewLine({ sublistId: 'inventoryassignment' });
+                        try {
+                            inventoryDetail.setCurrentSublistText({
+                                sublistId: 'inventoryassignment', fieldId: 'receiptinventorynumber', text: String(serials[s])
+                            });
+                        } catch (e) {
+                            inventoryDetail.setCurrentSublistValue({
+                                sublistId: 'inventoryassignment', fieldId: 'receiptinventorynumber', value: serials[s]
+                            });
+                        }
+                        try {
+                            inventoryDetail.setCurrentSublistValue({
+                                sublistId: 'inventoryassignment', fieldId: 'inventorystatus', value: itemData.inventorystatus || 1
+                            });
+                        } catch (statusErr) {
+                            // Abaikan kalau fitur Inventory Status tidak dipakai di item ini
+                        }
+                        inventoryDetail.setCurrentSublistValue({
+                            sublistId: 'inventoryassignment', fieldId: 'quantity', value: 1
+                        });
+                        inventoryDetail.commitLine({ sublistId: 'inventoryassignment' });
+                    }
+                } else if (qtyToSet !== undefined) {
+                    // Gak ada serial/lot - cuma qty-per-status. Samakan total-nya ke qty baru
+                    // (mis. update 10 -> 11 tinggal nambah 1 ke baris status yang sudah ada).
+                    reconcileInventoryDetailQuantity(inventoryDetail, qtyToSet, itemData.inventorystatus || 1);
+                }
+            }
+
+            itemReceipt.commitLine({ sublistId: 'item' });
+            itemUpdated++;
+        }
+
+        return itemUpdated;
+    }
+
+    // =========================================================
+    // HELPER: Samakan (reconcile) total quantity inventory detail dengan qty baris, untuk item
+    // yang butuh inventory detail TAPI TIDAK pakai serial/lot number (mis. cuma "Multiple
+    // Inventory Status" - baris detail cuma Status + Quantity). Sama persis dengan helper yang
+    // ada di msi_post_item_fulfillment.js.
+    // =========================================================
+    function reconcileInventoryDetailQuantity(inventoryDetail, targetQty, defaultStatus) {
+
+        var lineCount = inventoryDetail.getLineCount({ sublistId: 'inventoryassignment' });
+
+        if (lineCount === 0) {
+            inventoryDetail.selectNewLine({ sublistId: 'inventoryassignment' });
+            try {
+                inventoryDetail.setCurrentSublistValue({
+                    sublistId: 'inventoryassignment', fieldId: 'inventorystatus', value: defaultStatus
+                });
+            } catch (e) {
+                // Abaikan jika fitur Inventory Status tidak aktif untuk item ini
+            }
+            inventoryDetail.setCurrentSublistValue({
+                sublistId: 'inventoryassignment', fieldId: 'quantity', value: targetQty
+            });
+            inventoryDetail.commitLine({ sublistId: 'inventoryassignment' });
+            return;
+        }
+
+        var currentTotal = 0;
+        for (var i = 0; i < lineCount; i++) {
+            currentTotal += parseFloat(inventoryDetail.getSublistValue({
+                sublistId: 'inventoryassignment', fieldId: 'quantity', line: i
+            })) || 0;
+        }
+
+        var delta = targetQty - currentTotal;
+        if (delta === 0) return;
+
+        var lastIndex = lineCount - 1;
+        inventoryDetail.selectLine({ sublistId: 'inventoryassignment', line: lastIndex });
+        var lastQty = parseFloat(inventoryDetail.getCurrentSublistValue({
+            sublistId: 'inventoryassignment', fieldId: 'quantity'
+        })) || 0;
+        var newQty = lastQty + delta;
+
+        if (newQty <= 0) {
+            inventoryDetail.cancelLine({ sublistId: 'inventoryassignment' });
+            inventoryDetail.removeLine({ sublistId: 'inventoryassignment', line: lastIndex });
+        } else {
+            inventoryDetail.setCurrentSublistValue({
+                sublistId: 'inventoryassignment', fieldId: 'quantity', value: newQty
+            });
+            inventoryDetail.commitLine({ sublistId: 'inventoryassignment' });
+        }
+    }
+
+    // =========================================================
+    // CORE: Update Item Receipt yang SUDAH ADA (dipanggil kalau caller kirim "id")
+    // =========================================================
+    // Beda dari createOneReceipt/receiveTransferOrder (yang transform dari dokumen sumber),
+    // update di sini record.load() langsung by id - persis pola yang sama dipakai script lain
+    // (mis. msi_post_sales_order.js: ada "id" -> load, gak ada -> create/transform). Mekanisme
+    // load/edit/save-nya SAMA untuk semua tipe record NetSuite; yang beda cuma nama field &
+    // sublist per tipe record, bukan cara update-nya.
+    //
+    // Kalau "items" tidak dikirim -> update header-only (memo/custbody/dll), baris item TIDAK
+    // disentuh sama sekali.
+    function updateItemReceipt(params) {
+        var itemReceipt = record.load({
+            type: record.Type.ITEM_RECEIPT,
+            id: params.id,
+            isDynamic: true
+        });
+
+        setHeaderFields(itemReceipt, params);
+
+        var payloadItems = params.items || params.lines;
+        if (payloadItems && payloadItems.length > 0) {
+            var payloadMap = buildPayloadMap(payloadItems);
+            updateReceiptLines(itemReceipt, payloadMap);
+        }
+
+        var irId = itemReceipt.save({ enableSourcing: false, ignoreMandatoryFields: true });
+
+        if (params.note && params.note.trim() !== "") {
+            var noteRec = record.create({ type: 'note', isDynamic: true });
+            noteRec.setValue({ fieldId: 'title', value: params.noteTitle || 'API Note' });
+            noteRec.setValue({ fieldId: 'note', value: params.note });
+            noteRec.setValue({ fieldId: 'transaction', value: irId });
+            noteRec.setValue({ fieldId: 'author', value: runtime.getCurrentUser().id });
+            noteRec.save();
+        }
+
+        try {
+            var irFields = search.lookupFields({
+                type: search.Type.ITEM_RECEIPT,
+                id: irId,
+                columns: ['tranid', 'trandate']
+            });
+            return {
+                id: irId,
+                tranid: irFields.tranid || '',
+                trandate: irFields.trandate || ''
+            };
+        } catch (e) {
+            log.error('ERROR fetch IR info', e.message);
+            return { id: irId };
+        }
+    }
+
+    // =========================================================
     // HELPER: Save Item Receipt + create note + bangun 1 baris response
     // =========================================================
     function saveItemReceiptAndBuildResponse(itemReceipt, params, sourceId, sourceRecordType, sourceKey, sourceNumKey, sourceTypeName) {
@@ -1400,6 +1621,23 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
                 return inspectTransferOrder(params.transfer_order_id, params.fulfillment_id);
             } catch (e) {
                 log.error('DEBUG ERROR', e);
+                return { success: false, message: e.message };
+            }
+        }
+
+        // 🔥 MODE UPDATE: "id" = internal id Item Receipt yang sudah ada -> load & edit langsung,
+        // TIDAK lewat transform sama sekali (beda dari mode create yang punya banyak jalur:
+        // po_id / transfer_order_id / customer_return_id / fulfillment_id).
+        if (params.id) {
+            try {
+                var updated = updateItemReceipt(params);
+                return {
+                    success: true,
+                    goods_receipts: [updated],
+                    id: params.id
+                };
+            } catch (e) {
+                log.error('UPDATE ERROR', e);
                 return { success: false, message: e.message };
             }
         }
