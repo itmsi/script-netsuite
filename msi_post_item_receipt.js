@@ -995,7 +995,11 @@ define(['N/record', 'N/search', 'N/log', 'N/runtime', 'N/format'], function (rec
         }
 
         // ---- Susun daftar kandidat mode ----
-        var forcedMode = params.line_mode ? String(params.line_mode) : null;
+        // Default 'shippable_position' (BUKAN auto-deteksi) - TERBUKTI auto-deteksi bisa milih mode
+        // yang salah kalau lebih dari 1 mode sama-sama "valid" secara teknis (skornya nyambung ke
+        // orderline yang beneran ada) tapi beda target. Caller masih bisa override eksplisit lewat
+        // "line_mode" (termasuk "auto" buat balik ke auto-deteksi kalau memang dibutuhkan).
+        var forcedMode = params.line_mode ? String(params.line_mode) : 'shippable_position';
         var forcedOffset = (params.line_offset === undefined || params.line_offset === null || params.line_offset === '') ? 0 : parseInt(params.line_offset, 10);
         if (isNaN(forcedOffset)) forcedOffset = 0;
 
