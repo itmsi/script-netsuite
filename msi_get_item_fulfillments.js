@@ -25,7 +25,7 @@
 }
  */
 
-define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
+define(['N/search', 'N/log'], (search, log) => {
 
     function formatToISO(dateStr) {
         if (!dateStr) return null;
@@ -100,25 +100,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
     };
 
     const post = (body) => {
-
-        // ── Instrumentasi timing sementara ──────────────────────────────────
-        // Script lama pun sudah cepat di sandbox tapi lambat di production —
-        // dugaan volume data / governance production, bukan cuma inefisiensi
-        // kode. mark() cuma log.audit tiap checkpoint ke Execution Log
-        // (kelihatan walau request akhirnya timeout/gagal) — TIDAK mengubah
-        // response JSON sama sekali. Hapus blok ini kalau sudah ketemu
-        // bottleneck-nya.
-        const __t0 = Date.now();
-        let __tPrev = __t0;
-        const mark = (label, extra) => {
-            const now = Date.now();
-            const stepMs = now - __tPrev;
-            const totalMs = now - __t0;
-            let remainingUsage = null;
-            try { remainingUsage = runtime.getCurrentScript().getRemainingUsage(); } catch (e) { /* noop */ }
-            log.audit('[TIMING] ' + label, `step=${stepMs}ms total=${totalMs}ms remainingUsage=${remainingUsage}` + (extra ? ' | ' + JSON.stringify(extra) : ''));
-            __tPrev = now;
-        };
 
         try {
 
@@ -289,8 +270,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                 }
             }
 
-            mark('header_search', { total_records: totalRecords, total_pages: totalPages, result_count: searchResults.length });
-
             if (totalRecords === 0 || page > totalPages) {
                 return {
                     status: 'success',
@@ -361,8 +340,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                     created_by_name: res.getText('createdby') || null,
                 });
             });
-
-            mark('build_headers', { header_count: pagedHeaders.length });
 
             // ── Search Line Items ─────────────────────────────────────────────
             // Filter accounttype=COGS cuma valid utk IF yang baris
@@ -530,13 +507,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                 ]);
             }
 
-            mark('line_search', {
-                line_count: Object.keys(linesByIf).reduce((sum, k) => sum + linesByIf[k].length, 0),
-                inventory_detail_row_count: Object.keys(linesByIf).reduce(
-                    (sum, k) => sum + linesByIf[k].reduce((s2, l) => s2 + l.inventory_detail.length, 0), 0
-                )
-            });
-
             // ── (dihapus) Search Inventory Detail per Line ──────────────────────
             // Sebelumnya search terpisah type:'inventorydetail' di sini — selain
             // kolom 'line'-nya invalid (SSS_INVALID_SRCH_COL) di production,
@@ -585,10 +555,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                 });
             }
 
-            mark('notes_search', {
-                note_count: Object.keys(notesByIf).reduce((sum, k) => sum + notesByIf[k].length, 0)
-            });
-
             // ── Search Custom Attach Files ────────────────────────────────────
             let filesByIf = {};
             if (foundIfIds.length > 0) {
@@ -635,10 +601,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                     log.error('File Search Error', e.message);
                 }
             }
-
-            mark('files_search', {
-                file_count: Object.keys(filesByIf).reduce((sum, k) => sum + filesByIf[k].length, 0)
-            });
 
             // ── Fallback Units dari Item Master ──────────────────────────────
             // IF yang dibuat dari Transfer Order sering TIDAK menyimpan unit di
@@ -724,8 +686,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                         log.error('Item Unit Search Error (' + st + ')', e.message);
                     }
                 });
-
-                mark('units_item_fallback', { fallback_item_count: needFallback.length });
             }
 
             // ── On Hand per Line (qty di lokasi baris) ──────────────────────
@@ -790,8 +750,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                     }
                 });
             }
-
-            mark('on_hand_search', { on_hand_key_count: Object.keys(onHandByItemLoc).length });
 
             // ── Gabungkan header + lines + inventory + notes + files ───────────
             let data = pagedHeaders.map(header => {
@@ -863,8 +821,6 @@ define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
                 header.files = filesByIf[String(header.id)] || [];
                 return header;
             });
-
-            mark('merge');
 
             return {
                 status: 'success',
