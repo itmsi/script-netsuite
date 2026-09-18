@@ -25,7 +25,7 @@
 }
  */
 
-define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
+define(['N/search', 'N/log', 'N/runtime'], (search, log, runtime) => {
 
     function formatToISO(dateStr) {
         if (!dateStr) return null;
@@ -100,6 +100,25 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
     };
 
     const post = (body) => {
+
+        // ── Instrumentasi timing sementara ──────────────────────────────────
+        // Script lama pun sudah cepat di sandbox tapi lambat di production —
+        // dugaan volume data / governance production, bukan cuma inefisiensi
+        // kode. mark() cuma log.audit tiap checkpoint ke Execution Log
+        // (kelihatan walau request akhirnya timeout/gagal) — TIDAK mengubah
+        // response JSON sama sekali. Hapus blok ini kalau sudah ketemu
+        // bottleneck-nya.
+        const __t0 = Date.now();
+        let __tPrev = __t0;
+        const mark = (label, extra) => {
+            const now = Date.now();
+            const stepMs = now - __tPrev;
+            const totalMs = now - __t0;
+            let remainingUsage = null;
+            try { remainingUsage = runtime.getCurrentScript().getRemainingUsage(); } catch (e) { /* noop */ }
+            log.audit('[TIMING] ' + label, `step=${stepMs}ms total=${totalMs}ms remainingUsage=${remainingUsage}` + (extra ? ' | ' + JSON.stringify(extra) : ''));
+            __tPrev = now;
+        };
 
         try {
 
@@ -270,6 +289,8 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 }
             }
 
+            mark('header_search', { total_records: totalRecords, total_pages: totalPages, result_count: searchResults.length });
+
             if (totalRecords === 0 || page > totalPages) {
                 return {
                     status: 'success',
@@ -341,6 +362,8 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 });
             });
 
+            mark('build_headers', { header_count: pagedHeaders.length });
+
             // ── Search Line Items ─────────────────────────────────────────────
             // Filter accounttype=COGS cuma valid utk IF yang baris
             // fulfillment-nya memang posting ke akun COGS (Sales Order /
@@ -350,6 +373,18 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
             // query line-nya dipisah 2: IF non-TO (pakai accounttype COGS)
             // dan IF Transfer Order (tanpa accounttype).
             let linesByIf = {};
+            // Units di-ambil langsung dari lineSearch di bawah, via join ke
+            // item master ('custitem_me_unit_type') — kolom native 'units'
+            // maupun 'baseunit' TIDAK valid untuk search ITEM_FULFILLMENT
+            // (SSS_INVALID_SRCH_COL), pola sama seperti di
+            // msi_get_transfer_orders.js. Sebelumnya bagian ini loop
+            // record.load() untuk SETIAP IF di halaman (bisa 50x per
+            // request) ditambah record.load per item master lagi, yang jadi
+            // penyebab utama lambat/timeout di halaman dengan banyak data —
+            // sekarang cukup ikut nebeng di lineSearch yang memang sudah jalan,
+            // tanpa API call tambahan sama sekali.
+            let unitsByLineKey = {};
+            let unitsDisplayByLineKey = {};
             if (foundIfIds.length > 0) {
                 const transferOrderIfIds = pagedHeaders
                     .filter(h => h.source_type === 'transfer_order')
@@ -365,44 +400,95 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     'internalid', 'line', 'lineuniquekey',
                     'item', 'itemtype', 'memo',
                     'quantity', 'rate',
-                    'location', 'department', 'class', search.createColumn({ name: 'displayname', join: 'item' })
+                    'location', 'department', 'class', search.createColumn({ name: 'displayname', join: 'item' }),
+                    search.createColumn({ name: 'custitem_me_unit_type', join: 'item' }),
+                    // Inventory detail (lot/serial) di-ambil via join langsung
+                    // ke sini juga — search type terpisah 'inventorydetail'
+                    // dengan kolom 'line' TIDAK valid (SSS_INVALID_SRCH_COL);
+                    // pola join 'inventorydetail' ini yang sudah terbukti jalan
+                    // di msi_get_customer_returns.js. Join 1:N ini bikin baris
+                    // hasil search "fan-out" (1 baris per lot/serial) — lihat
+                    // penanganannya di pushLine (lineByKey).
+                    // Catatan: 'expirationdate' & 'manualno' TIDAK valid sebagai
+                    // join column ke 'inventorydetail' (SSS_INVALID_SRCH_COL,
+                    // sama kayak 'baseunit' di item join) — cuma 'inventorynumber'
+                    // & 'quantity' yang terbukti jalan (dipakai juga di
+                    // msi_get_customer_returns.js).
+                    search.createColumn({ name: 'inventorynumber', join: 'inventorydetail' }),
+                    search.createColumn({ name: 'quantity', join: 'inventorydetail' })
                 ];
+
+                // Key: lineuniquekey (unik global) -> objek line yang sudah
+                // di-push ke linesByIf. Dipakai supaya baris fan-out dari join
+                // inventorydetail (1 line bisa py beberapa lot/serial) tidak
+                // bikin duplikat line, cuma nambah ke inventory_detail array.
+                const lineByKey = {};
 
                 const pushLine = res => {
                     let ifId = res.getValue('internalid');
                     if (!linesByIf[ifId]) linesByIf[ifId] = [];
 
-                    linesByIf[ifId].push({
-                        transaction: ifId,
-                        linesequencenumber: Number(res.getValue('line')),
-                        line_id: res.getValue('lineuniquekey'),
-                        item: res.getValue('item'),
-                        item_display: res.getText('item'),
-                        item_displayname: res.getValue({ name: 'displayname', join: 'item' }),
-                        itemtype: res.getValue('itemtype'),
-                        memo: res.getValue('memo'),
-                        quantity: Number(res.getValue('quantity')),
-                        rate: res.getValue('rate') ? Number(res.getValue('rate')) : 0,
-                        // currency diisi belakangan dari header (field header,
-                        // bukan per-line) — lihat blok penggabungan header+lines.
-                        currency: null,
-                        currency_display: null,
-                        // units diisi belakangan: prioritas dari record sublist
-                        // 'item' (unitsByLineKey), lalu fallback base unit item
-                        // master — kolom unit tidak dijamin valid di saved search
-                        // ITEM_FULFILLMENT.
-                        units: null,
-                        units_display: null,
-                        // On Hand diisi belakangan via inventory lookup per
-                        // (item + lokasi) — lihat blok "On Hand per Line".
-                        on_hand: null,
-                        location: res.getValue('location'),
-                        location_display: res.getText('location'),
-                        department: res.getValue('department'),
-                        department_display: res.getText('department'),
-                        class: res.getValue('class'),
-                        class_display: res.getText('class')
-                    });
+                    const lineUniqueKey = res.getValue('lineuniquekey');
+                    const lk = lineUniqueKey ? String(lineUniqueKey) : null;
+
+                    if (lk && !unitsByLineKey[lk] && !unitsDisplayByLineKey[lk]) {
+                        const unitVal = res.getValue({ name: 'custitem_me_unit_type', join: 'item' });
+                        const unitText = res.getText({ name: 'custitem_me_unit_type', join: 'item' });
+                        if (unitVal || unitText) {
+                            unitsByLineKey[lk] = (unitVal !== null && unitVal !== undefined && unitVal !== '') ? unitVal : unitText;
+                            unitsDisplayByLineKey[lk] = unitText || null;
+                        }
+                    }
+
+                    let line = lk ? lineByKey[lk] : null;
+                    if (!line) {
+                        line = {
+                            transaction: ifId,
+                            linesequencenumber: Number(res.getValue('line')),
+                            line_id: res.getValue('lineuniquekey'),
+                            item: res.getValue('item'),
+                            item_display: res.getText('item'),
+                            item_displayname: res.getValue({ name: 'displayname', join: 'item' }),
+                            itemtype: res.getValue('itemtype'),
+                            memo: res.getValue('memo'),
+                            quantity: Number(res.getValue('quantity')),
+                            rate: res.getValue('rate') ? Number(res.getValue('rate')) : 0,
+                            // currency diisi belakangan dari header (field header,
+                            // bukan per-line) — lihat blok penggabungan header+lines.
+                            currency: null,
+                            currency_display: null,
+                            // units diisi belakangan: prioritas dari kolom 'units'
+                            // hasil lineSearch (unitsByLineKey), lalu fallback base
+                            // unit item master untuk baris yang kolom unit-nya
+                            // kosong di search (umumnya IF dari Transfer Order).
+                            units: null,
+                            units_display: null,
+                            // On Hand diisi belakangan via inventory lookup per
+                            // (item + lokasi) — lihat blok "On Hand per Line".
+                            on_hand: null,
+                            location: res.getValue('location'),
+                            location_display: res.getText('location'),
+                            department: res.getValue('department'),
+                            department_display: res.getText('department'),
+                            class: res.getValue('class'),
+                            class_display: res.getText('class'),
+                            inventory_detail: []
+                        };
+                        linesByIf[ifId].push(line);
+                        if (lk) lineByKey[lk] = line;
+                    }
+
+                    const invNum = res.getValue({ name: 'inventorynumber', join: 'inventorydetail' });
+                    const invNumText = res.getText({ name: 'inventorynumber', join: 'inventorydetail' });
+                    const invQty = res.getValue({ name: 'quantity', join: 'inventorydetail' });
+                    if (invNum || invNumText || invQty) {
+                        line.inventory_detail.push({
+                            inventorynumber_id: invNum,
+                            inventorynumber_text: invNumText,
+                            lotnumber: invNumText,
+                            quantity: invQty,
+                        });
+                    }
                     return true;
                 };
 
@@ -444,98 +530,19 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 ]);
             }
 
-            // ── Ambil Units per baris via N/record ────────────────────────────
-            // Kolom unit tidak dijamin valid di saved search ITEM_FULFILLMENT,
-            // jadi diambil dari record sublist 'item', di-key per lineuniquekey
-            // supaya bisa di-lookup pas gabung dengan hasil lineSearch di atas.
-            let unitsByLineKey = {};
-            let unitsDisplayByLineKey = {};
-            if (foundIfIds.length > 0) {
-                foundIfIds.forEach(ifId => {
-                    try {
-                        let ifRecord = record.load({
-                            type: record.Type.ITEM_FULFILLMENT,
-                            id: ifId
-                        });
+            mark('line_search', {
+                line_count: Object.keys(linesByIf).reduce((sum, k) => sum + linesByIf[k].length, 0),
+                inventory_detail_row_count: Object.keys(linesByIf).reduce(
+                    (sum, k) => sum + linesByIf[k].reduce((s2, l) => s2 + l.inventory_detail.length, 0), 0
+                )
+            });
 
-                        let lineCount = ifRecord.getLineCount({ sublistId: 'item' });
-                        for (let i = 0; i < lineCount; i++) {
-                            let lineUniqueKey = ifRecord.getSublistValue({
-                                sublistId: 'item',
-                                fieldId: 'lineuniquekey',
-                                line: i
-                            });
-                            if (!lineUniqueKey) continue;
-
-                            const lk = String(lineUniqueKey);
-                            unitsByLineKey[lk] = ifRecord.getSublistValue({
-                                sublistId: 'item',
-                                fieldId: 'units',
-                                line: i
-                            }) || null;
-                            unitsDisplayByLineKey[lk] = ifRecord.getSublistText({
-                                sublistId: 'item',
-                                fieldId: 'units',
-                                line: i
-                            }) || null;
-                        }
-                    } catch (e) {
-                        log.error('Record Load Error for IF ' + ifId, e.message);
-                    }
-                });
-            }
-
-            // ── Search Inventory Detail per Line ───────────────────────────────
-            let inventoryByLineKey = {};
-            if (foundIfIds.length > 0) {
-                try {
-                    let invDetailSearch = search.create({
-                        type: 'inventorydetail',
-                        filters: [
-                            search.createFilter({
-                                name: 'internalid',
-                                join: 'transaction',
-                                operator: search.Operator.ANYOF,
-                                values: foundIfIds
-                            })
-                        ],
-                        columns: [
-                            search.createColumn({ name: 'internalid', join: 'transaction' }),
-                            'line',
-                            'quantity',
-                            'inventorynumber',
-                            'expirationdate',
-                            'manualno',
-                            search.createColumn({ name: 'quantity', join: 'inventorynumber' }),
-                            search.createColumn({ name: 'expirationdate', join: 'inventorynumber' }),
-                            search.createColumn({ name: 'lotnumber', join: 'inventorynumber' }),
-                            'custrecord_me_inventory_detail'
-                        ]
-                    });
-
-                    fetchSearchResults(invDetailSearch, res => {
-                        let ifId = res.getValue({ name: 'internalid', join: 'transaction' });
-                        let lineNum = res.getValue('line');
-                        let key = `${ifId}_${lineNum}`;
-
-                        if (!inventoryByLineKey[key]) inventoryByLineKey[key] = [];
-
-                        inventoryByLineKey[key].push({
-                            inventorynumber_id: res.getValue('inventorynumber'),
-                            inventorynumber_text: res.getText('inventorynumber'),
-                            lotnumber: res.getText({ name: 'lotnumber', join: 'inventorynumber' }),
-                            quantity: res.getValue('quantity'),
-                            quantity_onhand: res.getValue({ name: 'quantity', join: 'inventorynumber' }),
-                            expirationdate: res.getValue('expirationdate'),
-                            expirationdate_display: res.getText('expirationdate'),
-                            manualno: res.getValue('manualno')
-                        });
-                        return true;
-                    });
-                } catch (e) {
-                    log.error('Inventory Detail Search Error', e.message);
-                }
-            }
+            // ── (dihapus) Search Inventory Detail per Line ──────────────────────
+            // Sebelumnya search terpisah type:'inventorydetail' di sini — selain
+            // kolom 'line'-nya invalid (SSS_INVALID_SRCH_COL) di production,
+            // datanya sekarang sudah diambil langsung via join di lineSearch di
+            // atas (lihat pushLine), jadi blok search + 1 API call ini hilang
+            // total.
 
             // ── Search User Notes ─────────────────────────────────────────────
             let notesByIf = {};
@@ -577,6 +584,10 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     return true;
                 });
             }
+
+            mark('notes_search', {
+                note_count: Object.keys(notesByIf).reduce((sum, k) => sum + notesByIf[k].length, 0)
+            });
 
             // ── Search Custom Attach Files ────────────────────────────────────
             let filesByIf = {};
@@ -625,6 +636,10 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 }
             }
 
+            mark('files_search', {
+                file_count: Object.keys(filesByIf).reduce((sum, k) => sum + filesByIf[k].length, 0)
+            });
+
             // ── Fallback Units dari Item Master ──────────────────────────────
             // IF yang dibuat dari Transfer Order sering TIDAK menyimpan unit di
             // barisnya (kolom units kosong di record & search), padahal UI
@@ -634,17 +649,26 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
             // itemBaseUnitLabelById (label/abbr unit) — supaya response
             // konsisten: units = ID, units_display = label (pola sama seperti
             // location/location_display & msi_get_inventory_adjustments.js).
+            //
+            // PENTING: sebelumnya ini record.load() SATU-SATU per item unik —
+            // di production baris per-IF bisa ratusan (order besar), jadi item
+            // unik yang butuh fallback juga bisa ratusan → governance/usage
+            // limit (5000 unit) jebol di tengah jalan ("Script Execution Usage
+            // Limit Exceeded" lalu request keburu mati dgn ScriptNullObjectAdapter).
+            // Sekarang diganti search massal per tipe item (dikelompokkan dulu,
+            // 1 search per tipe, bukan per item) — pola sama seperti blok
+            // "On Hand per Line" di bawah.
             let itemBaseUnitIdById = {};
             let itemBaseUnitLabelById = {};
             if (Object.keys(linesByIf).length > 0) {
-                const itemTypeToRecordType = (t) => {
+                const itemTypeToSearchType = (t) => {
                     switch (t) {
-                        case 'InvtPart':    return record.Type.INVENTORY_ITEM;
-                        case 'NonInvtPart': return record.Type.NON_INVENTORY_ITEM;
-                        case 'Serialized':  return record.Type.SERIALIZED_INVENTORY_ITEM;
-                        case 'Lot':         return record.Type.LOT_NUMBERED_INVENTORY_ITEM;
-                        case 'Kit':         return record.Type.KIT;
-                        default:            return null;
+                        case 'InvtPart':    return search.Type.INVENTORY_ITEM;
+                        case 'NonInvtPart': return search.Type.NON_INVENTORY_ITEM;
+                        case 'Serialized':  return search.Type.SERIALIZED_INVENTORY_ITEM;
+                        case 'Lot':         return search.Type.LOT_NUMBERED_INVENTORY_ITEM;
+                        case 'Kit':         return search.Type.KIT;
+                        default:            return search.Type.INVENTORY_ITEM;
                     }
                 };
 
@@ -661,36 +685,47 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     });
                 });
 
+                // Kelompokkan item unik yang butuh fallback per search type,
+                // supaya bisa 1 search per type (bukan per item).
+                const itemIdsByType = {};
                 needFallback.forEach(l => {
-                    const itemId = l.item;
+                    const st = itemTypeToSearchType(l.itemtype);
+                    if (!itemIdsByType[st]) itemIdsByType[st] = [];
+                    itemIdsByType[st].push(l.item);
+                });
+
+                Object.keys(itemIdsByType).forEach(st => {
+                    const itemIds = itemIdsByType[st];
+                    if (itemIds.length === 0) return;
                     try {
-                        const recType = itemTypeToRecordType(l.itemtype) || record.Type.INVENTORY_ITEM;
-                        const itemRec = record.load({ type: recType, id: itemId });
-
-                        // Coba field baseunit dulu (standar, value = internal ID
-                        // unit, text = label/abbr), lalu custitem_me_unit_type.
-                        let unitVal = null;
-                        let unitLabel = null;
-                        ['baseunit', 'custitem_me_unit_type'].forEach(f => {
-                            if (unitLabel) return;
-                            try {
-                                const v = itemRec.getValue({ fieldId: f });
-                                const t = itemRec.getText({ fieldId: f });
-                                if (t) {
-                                    unitVal = (v !== null && v !== undefined && v !== '') ? String(v) : t;
-                                    unitLabel = t;
-                                }
-                            } catch (e) { /* field mungkin tidak tersedia di tipe item ini */ }
+                        // 'baseunit' TIDAK valid sebagai search column di akun
+                        // ini (SSS_INVALID_SRCH_COL, baik native maupun join),
+                        // jadi cuma pakai 'custitem_me_unit_type' — sama seperti
+                        // di lineSearch utama & msi_get_transfer_orders.js.
+                        const unitSearch = search.create({
+                            type: st,
+                            filters: [['internalid', 'anyof', itemIds]],
+                            columns: [
+                                search.createColumn({ name: 'internalid' }),
+                                search.createColumn({ name: 'custitem_me_unit_type' })
+                            ]
                         });
-
-                        itemBaseUnitIdById[itemId] = unitVal;
-                        itemBaseUnitLabelById[itemId] = unitLabel;
+                        // fetchSearchResults (getRange) dipakai, bukan
+                        // '.run().each()' — .each() dibatasi maks 4000 hasil.
+                        fetchSearchResults(unitSearch, r => {
+                            const itemId = r.getValue('internalid');
+                            const unitVal = r.getValue('custitem_me_unit_type');
+                            const unitLabel = r.getText('custitem_me_unit_type');
+                            itemBaseUnitIdById[itemId] = (unitVal || unitLabel) || null;
+                            itemBaseUnitLabelById[itemId] = unitLabel || null;
+                            return true;
+                        });
                     } catch (e) {
-                        log.error('Item Load Error for unit fallback item ' + itemId, e.message);
-                        itemBaseUnitIdById[itemId] = null;
-                        itemBaseUnitLabelById[itemId] = null;
+                        log.error('Item Unit Search Error (' + st + ')', e.message);
                     }
                 });
+
+                mark('units_item_fallback', { fallback_item_count: needFallback.length });
             }
 
             // ── On Hand per Line (qty di lokasi baris) ──────────────────────
@@ -739,7 +774,11 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                                 search.createColumn({ name: 'inventorylocation' })
                             ]
                         });
-                        invSearch.run().each(r => {
+                        // '.run().each()' dibatasi maks 4000 hasil oleh NetSuite
+                        // dan bikin request ini gagal di data besar (item x lokasi
+                        // unik bisa lewat 4000 kombinasi) — pakai fetchSearchResults
+                        // (getRange, gak kena batas itu) sama seperti blok lain.
+                        fetchSearchResults(invSearch, r => {
                             const key = String(r.id) + '_' + String(r.getValue('inventorylocation'));
                             const oh = r.getValue('locationquantityonhand');
                             onHandByItemLoc[key] =
@@ -751,6 +790,8 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                     }
                 });
             }
+
+            mark('on_hand_search', { on_hand_key_count: Object.keys(onHandByItemLoc).length });
 
             // ── Gabungkan header + lines + inventory + notes + files ───────────
             let data = pagedHeaders.map(header => {
@@ -769,12 +810,10 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 });
 
                 // ── Urutkan & beri nomor berurutan 1..N sesuai urutan UI,
-                // lalu map units & inventory detail per baris. Key inventory
-                // detail memakai nomor baris ASLI di transactionline (diambil
-                // sebelum renumber).
+                // lalu map units per baris. Inventory detail sudah menempel
+                // langsung di line object dari pushLine (lihat lineSearch).
                 lines.sort((a, b) => a.linesequencenumber - b.linesequencenumber);
                 lines.forEach((line, idx) => {
-                    const rawSeq = line.linesequencenumber;
                     line.linesequencenumber = idx + 1;
 
                     // Units: prioritas → unit dari record sublist 'item'
@@ -807,9 +846,6 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                         line.on_hand = ohData;
                     }
 
-                    const invKey = `${header.id}_${rawSeq}`;
-                    line.inventory_detail = inventoryByLineKey[invKey] || [];
-
                     // Currency bukan field per-line di Item Fulfillment,
                     // tapi field header transaksi — dipasang ke tiap baris
                     // supaya UI (khusus tipe vendor_return) bisa tampilkan
@@ -827,6 +863,8 @@ define(['N/search', 'N/log', 'N/record'], (search, log, record) => {
                 header.files = filesByIf[String(header.id)] || [];
                 return header;
             });
+
+            mark('merge');
 
             return {
                 status: 'success',
