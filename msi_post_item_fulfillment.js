@@ -130,6 +130,11 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 hasValidLine = true;
             }
 
+            // 🔥 Mode update: kumpulkan baris yang qty-nya diminta MELEBIHI qty yang masih bisa
+            // di-fulfill dari dokumen asal (SO/TO/VR) - dilaporkan sebagai error, bukan
+            // di-silent-clamp kayak mode create.
+            var qtyViolations = [];
+
             // =========================
             // 🔥 LOOP LINE NETSUITE
             // =========================
@@ -235,6 +240,12 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
 
                 // jangan lebih dari remaining
                 if (qtyToFulfill > qtyRemaining) {
+                    if (isUpdateMode) {
+                        qtyViolations.push(
+                            'Baris ' + (i + 1) + ': diminta ' + qtyToFulfill +
+                            ', tapi yang masih bisa di-fulfill dari dokumen asal cuma tersisa ' + qtyRemaining
+                        );
+                    }
                     qtyToFulfill = qtyRemaining;
                 }
 
@@ -351,6 +362,13 @@ define(['N/record', 'N/log', 'N/search', 'N/runtime'], function (record, log, se
                 fulfillment.commitLine({
                     sublistId: 'item'
                 });
+            }
+
+            if (qtyViolations.length > 0) {
+                return {
+                    status: 'error',
+                    message: 'Qty yang diminta melebihi qty yang masih bisa di-fulfill dari dokumen asal: ' + qtyViolations.join('; ')
+                };
             }
 
             if (!hasValidLine) {

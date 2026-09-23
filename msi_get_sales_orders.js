@@ -156,7 +156,8 @@ define(['N/search', 'N/log'], (search, log) => {
                 'intercostatus',
                 'startdate',
                 'enddate',
-                'terms'
+                'terms', 
+                'createdby'
             ];
 
             const columns = columnDefs.map(name => {
@@ -256,13 +257,19 @@ define(['N/search', 'N/log'], (search, log) => {
                     intercostatus_name: r.getText('intercostatus'),
                     total_amount: r.getValue('amount') !== '' && r.getValue('amount') !== null ? r.getValue('amount') : 0,
                     last_modified: formatToISO(r.getValue('lastmodifieddate')),
-                    datecreated: formatToISO(r.getValue('datecreated'))
+                    datecreated: formatToISO(r.getValue('datecreated')),
+                    created_by_id: r.getValue('createdby') ? Number(r.getValue('createdby')) : null,
+                    created_by_name: r.getText('createdby') || null
                 }));
             });
 
             // ── Fetch line items via N/search ─────────────────────────────────
             const soIds = headers.map(h => h.id);
             const linesByOrder = {};
+
+            // Map header by id — dipakai untuk fallback location kalau line-nya kosong
+            const headerById = {};
+            headers.forEach(h => { headerById[h.id] = h; });
 
             if (soIds.length > 0) {
                 const lineSearchFilters = [
@@ -396,8 +403,10 @@ define(['N/search', 'N/log'], (search, log) => {
                         msi_down_payment_amount: result.getValue('custcol_msi_down_payment_amount'),
                         exclude_item_from_rate_req: result.getValue('excludefromraterequest'),
                         apply_wh_tax: result.getValue('custcol_4601_witaxapplies'),
-                        location_id: result.getValue('location') ? String(result.getValue('location')) : null,
-                        location_name: result.getText('location'),
+                        location_id: result.getValue('location')
+                            ? String(result.getValue('location'))
+                            : (headerById[soId] && headerById[soId].location ? String(headerById[soId].location) : null),
+                        location_name: result.getValue('location') ? result.getText('location') : (headerById[soId] ? headerById[soId].location_name : null),
                         department: result.getValue('department'),
                         department_name: result.getText('department'),
                         class: result.getValue('class'), // property name 'class' is valid here
@@ -464,8 +473,8 @@ define(['N/search', 'N/log'], (search, log) => {
                     linesByOrder[soId].forEach((line) => {
                         if (line.item_id && itemIds.indexOf(line.item_id) === -1)
                             itemIds.push(line.item_id);
-                        if (line.location && locationIds.indexOf(line.location) === -1)
-                            locationIds.push(line.location);
+                        if (line.location_id && locationIds.indexOf(line.location_id) === -1)
+                            locationIds.push(line.location_id);
                     });
                 });
 
@@ -500,7 +509,7 @@ define(['N/search', 'N/log'], (search, log) => {
                     // Map quantities back to each line
                     Object.keys(linesByOrder).forEach((soId) => {
                         linesByOrder[soId].forEach((line) => {
-                            const key = line.item_id + '_' + line.location;
+                            const key = line.item_id + '_' + line.location_id;
                             const data = inventoryMap[key];
                             if (data) {
                                 line.available = data.available;

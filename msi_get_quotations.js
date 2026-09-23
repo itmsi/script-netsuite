@@ -88,9 +88,16 @@ define(['N/search'], (search) => {
 
             // Filter: lastmodified — return data modified on or after this date
             if (filters.lastmodified) {
-                const d      = new Date(filters.lastmodified);
-                const nsDate = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
-                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
+                var lmMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(filters.lastmodified));
+                if (!lmMatch) {
+                    throw new Error("filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '" + filters.lastmodified + "'.");
+                }
+
+                var lmSqlDate = lmMatch[1] + '-' + lmMatch[2] + '-' + lmMatch[3] + ' ' +
+                    lmMatch[4] + ':' + lmMatch[5] + ':' + (lmMatch[6] || '00');
+
+                var lmFormula = "formulanumeric: CASE WHEN {lastmodifieddate} >= TO_DATE('" + lmSqlDate + "', 'YYYY-MM-DD HH24:MI:SS') THEN 1 ELSE 0 END";
+                searchFilters.push('AND', [lmFormula, 'equalto', '1']);
             }
 
             // ── Sort column mapping ───────────────────────────────────────────
