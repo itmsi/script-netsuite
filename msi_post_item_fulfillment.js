@@ -1,5 +1,5 @@
 /**
- * @NApiVersion 2.x
+ * @NApiVersion 2.1
  * @NScriptType Restlet
  *  "sales_order_id": 5157,               // Internal ID Sales Order
  *  "transfer_order_id": 1234,   // Internal ID Transfer Order

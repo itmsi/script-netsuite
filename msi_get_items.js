@@ -148,42 +148,57 @@ define(['N/search'], (search) => {
         const itemIds = searchPage.data.map(item => item.id);
         const priceLevelMap = {};
 
+        // Key priceLevelMap[item] = minimum quantity tier (kolom "Qty 0 / Qty 10 / ..."
+        // di tab Sales/Pricing), isinya daftar price level beserta harganya.
+        const collectPriceLevels = (withQtyTier) => {
+            const columns = [
+                search.createColumn({ name: "item" }),
+                search.createColumn({ name: "pricelevel" }),
+                search.createColumn({ name: "currency" }),
+                search.createColumn({ name: "unitprice" })
+            ];
+            if (withQtyTier) columns.push(search.createColumn({ name: "minimumquantity" }));
+
+            const result = {};
+            search.create({
+                type: 'pricing',
+                filters: [
+                    ["item", "anyof", itemIds]
+                ],
+                columns
+            }).run().each(row => {
+                const currencyText = row.getText("currency");
+                if (currencyText === "IDR") {
+                    const pItemId = row.getValue("item");
+                    const pQty = withQtyTier ? String(parseFloat(row.getValue("minimumquantity")) || 0) : "0";
+                    const pLevelId = row.getValue("pricelevel");
+                    const pLevelName = row.getText("pricelevel");
+                    const pPrice = row.getValue("unitprice");
+                    if (!result[pItemId]) result[pItemId] = {};
+                    if (!result[pItemId][pQty]) result[pItemId][pQty] = [];
+                    result[pItemId][pQty].push({
+                        priceLevel: pLevelName || pLevelId,
+                        priceLevelId: pLevelId || null,
+                        price: pPrice || "0"
+                    });
+                }
+                return true;
+            });
+            return result;
+        };
+
         if (itemIds.length > 0) {
             try {
-                const priceSearch = search.create({
-                    type: 'pricing',
-                    filters: [
-                        ["item", "anyof", itemIds]
-                    ],
-                    columns: [
-                        search.createColumn({ name: "item" }),
-                        search.createColumn({ name: "pricelevel" }),
-                        search.createColumn({ name: "currency" }),
-                        search.createColumn({ name: "unitprice" })
-                    ]
-                });
-
-                // Search type "pricing" tidak expose breakdown quantity tier,
-                // jadi semua price level dikelompokkan di bawah key "0".
-                priceSearch.run().each(row => {
-                    const currencyText = row.getText("currency");
-                    if (currencyText === "IDR") {
-                        const pItemId = row.getValue("item");
-                        const pQty = "0";
-                        const pLevelId = row.getValue("pricelevel");
-                        const pLevelName = row.getText("pricelevel");
-                        const pPrice = row.getValue("unitprice");
-                        if (!priceLevelMap[pItemId]) priceLevelMap[pItemId] = {};
-                        if (!priceLevelMap[pItemId][pQty]) priceLevelMap[pItemId][pQty] = [];
-                        priceLevelMap[pItemId][pQty].push({
-                            priceLevel: pLevelName || pLevelId,
-                            price: pPrice || "0"
-                        });
-                    }
-                    return true;
-                });
+                Object.assign(priceLevelMap, collectPriceLevels(true));
             } catch (e) {
-                log.debug('Price Level Search Error', e.message);
+                // Fallback kalau kolom minimumquantity tidak tersedia: semua tier
+                // dikelompokkan di bawah key "0" (tanpa info quantity)
+                log.debug('Price Level Search Error (qty tier)', e.message);
+                try {
+                    Object.assign(priceLevelMap, collectPriceLevels(false));
+                } catch (e2) {
+                    log.debug('Price Level Search Error', e2.message);
+                }
             }
         }
 

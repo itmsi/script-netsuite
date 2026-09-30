@@ -39,6 +39,7 @@
        "class": 3,                      
        "location": 19,                    
        "taxcode": 18098,                       // Internal ID kode pajak
+       "price_level": 1,                  // Internal ID price level (-1 = Custom). Selain Custom, rate & amount diabaikan (di-source NetSuite)
        "custcol_me_tier_price": 100000,   // Harga tier
        "custcol_msi_booking_fee_so": 5000000, // Booking fee msi - booking fee -> khusus iec dan msi kalau iel auto 0
        "custcol_msi_down_payment_percent": 30, // Persentase uang muka (%) msi - down payment persen dan 
@@ -263,7 +264,25 @@ define(['N/record','N/format','N/search'], function (record, format, search) {
                         });
                     }
 
-                    if (payloadItem.rate !== undefined && payloadItem.rate !== null) {
+                    // Price level: -1 = Custom (rate diisi manual). Selain Custom, rate di-source
+                    // NetSuite dari price level, jadi rate/amount tidak di-set supaya price level
+                    // tidak berubah jadi Custom.
+                    var priceLevel = payloadItem.price_level;
+                    if (priceLevel === undefined || priceLevel === null || priceLevel === '') {
+                        priceLevel = payloadItem.pricelevel;
+                    }
+                    var hasPriceLevel = priceLevel !== undefined && priceLevel !== null && priceLevel !== '';
+                    var isCustomPriceLevel = !hasPriceLevel || Number(priceLevel) === -1;
+
+                    if (hasPriceLevel) {
+                        so.setCurrentSublistValue({
+                            sublistId: 'item',
+                            fieldId: 'pricelevel',
+                            value: priceLevel
+                        });
+                    }
+
+                    if (isCustomPriceLevel && payloadItem.rate !== undefined && payloadItem.rate !== null) {
                         so.setCurrentSublistValue({
                             sublistId: 'item',
                             fieldId: 'rate',
@@ -271,7 +290,7 @@ define(['N/record','N/format','N/search'], function (record, format, search) {
                         });
                     }
 
-                    if (payloadItem.amount !== undefined && payloadItem.amount !== null) {
+                    if (isCustomPriceLevel && payloadItem.amount !== undefined && payloadItem.amount !== null) {
                         so.setCurrentSublistValue({
                             sublistId: 'item',
                             fieldId: 'amount',
