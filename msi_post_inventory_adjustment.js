@@ -37,7 +37,25 @@
  }
  */
 
-define(['N/record', 'N/format'], (record, format) => {
+define(['N/record', 'N/format','N/runtime', 'N/workflow', 'N/search'], (record, format, runtime, workflow, search) => {
+
+  // Ambil lastpurchaseprice untuk banyak item sekaligus → { itemId: price }
+    const getLastPurchasePrices = (itemIds) => {
+        const result = {};
+        const ids = [...new Set(itemIds.filter(Boolean).map(String))];
+        if (ids.length === 0) return result;
+
+        search.create({
+            type: search.Type.ITEM,
+            filters: [['internalid', 'anyof', ids]],
+            columns: ['lastpurchaseprice']
+        }).run().each((res) => {
+            const price = res.getValue({ name: 'lastpurchaseprice' });
+            result[res.id] = (price !== '' && price !== null) ? parseFloat(price) : null;
+            return true;
+        });
+        return result;
+    };
 
     const post = (body) => {
 
@@ -125,6 +143,7 @@ define(['N/record', 'N/format'], (record, format) => {
                 invAdj.setValue({ fieldId: 'custbody_me_opening_balance', value: body.custbody_me_opening_balance });
             }
 
+            const lastPrices = getLastPurchasePrices(body.lines.map(l => l.item));
             // ── Proses setiap baris ───────────────────────────────────────────
             body.lines.forEach((lineData, idx) => {
 
@@ -175,11 +194,18 @@ define(['N/record', 'N/format'], (record, format) => {
                 }
 
                 // Proposed Unit Cost
-                if (lineData.unit_cost !== undefined) {
+                // Unit Cost: pakai unit_cost dari body, kalau kosong pakai lastpurchaseprice item
+                const unitCost = (lineData.unit_cost !== undefined && lineData.unit_cost !== null && lineData.unit_cost !== '')
+                    ? lineData.unit_cost
+                    : lastPrices[String(lineData.item)];
+
+                log.debug('unitCost line ' + idx, { item: lineData.item, unitCost });
+
+                if (unitCost !== undefined && unitCost !== null && !isNaN(unitCost)) {
                     invAdj.setCurrentSublistValue({
                         sublistId: 'inventory',
-                        fieldId: 'unitcost',
-                        value: lineData.unit_cost
+                        fieldId: 'custcol_me_proposed_unit_cost',
+                        value: unitCost
                     });
                 }
 
@@ -282,6 +308,60 @@ define(['N/record', 'N/format'], (record, format) => {
                 enableSourcing: true,
                 ignoreMandatoryFields: false
             });
+
+            //--Create Note - use field Memo 
+            var noteRec = record.create({
+                    type: 'note',
+                    isDynamic: true
+                });
+
+                noteRec.setValue({
+                    fieldId: 'title',
+                    value: body.noteTitle || 'API Note'
+                });
+
+                noteRec.setValue({
+                    fieldId: 'note',
+                    value: body.note || body.memo
+                });
+
+                noteRec.setValue({
+                    fieldId: 'transaction',
+                    value: newId 
+                });
+
+                noteRec.setValue({
+                    fieldId: 'author',
+                    value: runtime.getCurrentUser().id
+                });
+
+                noteId = noteRec.save();
+
+                //Next Workflow
+               try {
+                var recType = record.Type.INVENTORY_ADJUSTMENT;
+                var approvalWorkflowId
+                workflow.trigger({
+                    recordId: newId,
+                    recordType: recType,
+                    workflowId: 'customworkflow_me_workflow_approvals_dl',
+                    actionId: 'workflowaction_me_init_approve'
+                });
+
+                try {
+                    record.load({ type: recType, id: newId, isDynamic: false });
+                } catch (loadErr) {
+                    log.error({
+                        title: 'Submit Approval IA - gagal force record.load setelah trigger',
+                        details: 'trxId ' + newId + ': ' + loadErr.message
+                    });
+                }
+            } catch (e) {
+                log.error({
+                    title: 'Submit Approval IA error',
+                    details: 'trxId ' + newId + ': ' + e.message
+                });
+            }
 
             return {
                 status: 'success',
