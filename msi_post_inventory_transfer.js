@@ -37,7 +37,7 @@
 
 
  */
-define(['N/record', 'N/format'], function (record, format) {
+define(['N/record', 'N/format', 'N/search'], function (record, format, search) {
 
     function post(body) {
         try {
@@ -435,10 +435,26 @@ define(['N/record', 'N/format'], function (record, format) {
                 ignoreMandatoryFields: false
             });
 
+            // Ambil Document Number (tranid) setelah save
+            var documentNumber = null;
+            try {
+                documentNumber = search.lookupFields({
+                    type   : search.Type.INVENTORY_TRANSFER,
+                    id     : newId,
+                    columns: ['tranid']
+                }).tranid || null;
+            } catch (lookupErr) {
+                log.error({
+                    title  : 'Lookup tranid Inventory Transfer gagal',
+                    details: 'trxId ' + newId + ': ' + lookupErr.message
+                });
+            }
+
             return {
                 status              : 'success',
                 message             : isUpdate ? 'Inventory Transfer berhasil diupdate' : 'Inventory Transfer berhasil dibuat',
                 inventory_transfer_id: newId,
+                document_number     : documentNumber,
                 from_location       : fromLocationId || null,
                 to_location         : toLocationId || null
             };

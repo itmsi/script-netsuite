@@ -363,10 +363,26 @@ define(['N/record', 'N/format','N/runtime', 'N/workflow', 'N/search'], (record, 
                 });
             }
 
+            // Ambil Document Number (tranid) setelah save
+            let documentNumber = null;
+            try {
+                documentNumber = search.lookupFields({
+                    type: search.Type.INVENTORY_ADJUSTMENT,
+                    id: newId,
+                    columns: ['tranid']
+                }).tranid || null;
+            } catch (lookupErr) {
+                log.error({
+                    title: 'Lookup tranid IA gagal',
+                    details: 'trxId ' + newId + ': ' + lookupErr.message
+                });
+            }
+
             return {
                 status: 'success',
                 message: 'Inventory Adjustment berhasil dibuat',
-                inventory_adjustment_id: newId
+                inventory_adjustment_id: newId,
+                document_number: documentNumber
             };
 
         } catch (error) {
