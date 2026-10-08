@@ -82,6 +82,13 @@ define(['N/search', 'N/record', 'N/query'], (search, record, query) => {
         return d.toISOString();
     };
 
+    // Format angka jadi string 2 desimal (cth: 200000 -> "200000.00"), sama seperti output search
+    const formatAmount = (val) => {
+        if (val === null || val === undefined || val === '') return null;
+        let num = parseFloat(val);
+        return isNaN(num) ? String(val) : num.toFixed(2);
+    };
+
     const getVal = (rec, sublist, field, line) => {
         try {
             return rec.getSublistValue({ sublistId: sublist, fieldId: field, line: line });
@@ -146,11 +153,11 @@ define(['N/search', 'N/record', 'N/query'], (search, record, query) => {
                     search.createColumn({ name: sortBy, sort: sortOrder ? search.Sort.DESC : search.Sort.ASC }),
                     'internalid',
                     'transactionnumber', 'entity', 'account', 'total',
-                    'currency', 'exchangerate', 'trandate', 'postingperiod', 'tranid', search.createColumn({ name: 'balance', join: 'vendor' }),
+                    'currency', 'exchangerate', 'trandate', 'postingperiod', 'tranid',
                     'custbody_me_wf_created_by', 'approvalstatus', 'subsidiarynohierarchy', 'department',
-                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }), 
-                    'custbody_me_wf_next_approver_blank', 'custbody_me_delegate_approver', 'custbody_me_wf_in_delegation',
-                    'class', 'location', 'custbody_cseg_cn_cfi', 'lastmodifieddate'
+                    search.createColumn({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }),
+                    'custbody_me_delegate_approver', 'custbody_me_wf_in_delegation',
+                    'class', 'location', 'custbody_cseg_cn_cfi', 'memo', 'lastmodifieddate'
                 ]
             });
 
@@ -182,7 +189,7 @@ define(['N/search', 'N/record', 'N/query'], (search, record, query) => {
                     entity_display:                    res.getText('entity'),
                     account:                           res.getValue('account'),
                     account_display:                   res.getText('account'),
-                    balance:                           res.getValue({ name: 'balance', join: 'vendor' }),
+                    balance:                           null,
                     total:                             res.getValue('total'),
                     currency:                          res.getValue('currency'),
                     currency_display:                  res.getText('currency'),
@@ -191,7 +198,8 @@ define(['N/search', 'N/record', 'N/query'], (search, record, query) => {
                     postingperiod:                     res.getValue('postingperiod'),
                     postingperiod_display:             res.getText('postingperiod'),
                     tranid:                            res.getValue('tranid'),
-                    custbody_me_wf_created_by:         res.getValue('custbody_me_wf_created_by'),
+                    memo:                              res.getValue('memo'),
+                    custbody_me_wf_created_by:        res.getValue('custbody_me_wf_created_by'),
                     custbody_me_wf_created_by_display: res.getText('custbody_me_wf_created_by'),
                     approvalstatus:                    res.getValue('approvalstatus'),
                     approvalstatus_display:            res.getText('approvalstatus'),
@@ -205,10 +213,10 @@ define(['N/search', 'N/record', 'N/query'], (search, record, query) => {
                     location_display:                  res.getText('location'),
                     custbody_cseg_cn_cfi:              res.getValue('custbody_cseg_cn_cfi'),
                     custbody_cseg_cn_cfi_display:      res.getText('custbody_cseg_cn_cfi'),
-                    next_approver:                     res.getValue('custworkflow_me_wf_current_approver'),
+                    next_approver:                     null,
                     delegate_approver:                 res.getValue('custbody_me_delegate_approver'),
                     in_delegation:                     res.getValue('custbody_me_wf_in_delegation'),
-                    next_approver_blank:               res.getValue('custbody_me_wf_next_approver_blank'),
+                    next_approver_blank:               null,
                     last_modified:                     formatToISO(res.getValue('lastmodifieddate')),
                     applied_to:                        [],
                     credit_applied:                    [],
@@ -223,7 +231,18 @@ define(['N/search', 'N/record', 'N/query'], (search, record, query) => {
             pagedHeaders.forEach(header => {
                 try {
                     let rec = record.load({ type: record.Type.VENDOR_PAYMENT, id: header.payment_id });
-                    
+
+                    // Amount & Balance sesuai tampilan UI (currency transaksi)
+                    // Next approver dibaca langsung dari record (sama seperti msi_approval_wf.js),
+                    // karena field body ini tidak bisa dipakai sebagai kolom search.
+                    let nextApproverId = rec.getText({ fieldId: 'custbody_me_wf_next_approver_blank' });
+                    header.next_approver_blank = (nextApproverId !== null && nextApproverId !== '') ? nextApproverId : null;
+                    let nextApproverText = rec.getValue({ fieldId: 'custbody_me_wf_next_approver_blank' });
+                    header.next_approver = nextApproverText || null;
+                    let recTotal = rec.getValue({ fieldId: 'total' });
+                    if (recTotal !== null && recTotal !== '') header.total = formatAmount(recTotal);
+                    header.balance = formatAmount(rec.getValue({ fieldId: 'balance' }));
+
                     // sublist 'apply' -> Applied To (Bills)
                     try {
                         let applyCount = rec.getLineCount({ sublistId: 'apply' });
