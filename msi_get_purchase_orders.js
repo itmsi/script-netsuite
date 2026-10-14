@@ -257,7 +257,8 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     custbody_me_validity_date   : res.getValue('custbody_me_validity_date'),
                     department                  : res.getValue('department'),
                     department_display          : res.getText('department'),
-                    datecreated                 : formatToISO(res.getValue('datecreated'))
+                    datecreated                 : formatToISO(res.getValue('datecreated')),
+                    has_invPart                 : false
                 });
             });
 
@@ -337,6 +338,12 @@ define(['N/search', 'N/query', 'N/log'], (search, query, log) => {
                     let lineRate = quantity > 0 ? Number(rateValue) : Number(lineAmount);
                     let lineTaxAmt = Number(taxValue) || 0;
                     let grossAmt = (Math.abs(lineAmount) + Math.abs(lineTaxAmt));
+
+                    const itemTypeValue = String(res.getValue('itemtype') || '');
+                    if (itemTypeValue.toLowerCase() === 'invtpart') {
+                        const header = pagedHeaders.find(h => String(h.po_id) === String(poId));
+                        if (header) header.has_invPart = true;
+                    }
 
                     linesByPo[poId].push({
                         transaction: poId,
