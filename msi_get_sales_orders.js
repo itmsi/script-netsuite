@@ -252,6 +252,7 @@ define(['N/search', 'N/log'], (search, log) => {
                     intercostatus: r.getValue('intercostatus'),
                     custbody_me_approval_status: r.getValue('custbody_me_approval_status'),
                     custbody_me_approval_status_name: r.getText('custbody_me_approval_status'),
+                    status: r.getValue('status'),
                     nextapprover: r.getText({ name: 'custworkflow_me_wf_current_approver', join: 'workflow' }) || r.getValue('custbody_me_wf_next_approver_blank'),
                     custbody_msi_createdby_api: r.getValue('custbody_msi_createdby_api'),
                     intercostatus_name: r.getText('intercostatus'),

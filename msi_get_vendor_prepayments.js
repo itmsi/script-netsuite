@@ -142,7 +142,7 @@ define(['N/search', 'N/record'], (search, record) => {
                     'tranid', 'memo',
                     'approvalstatus', 'custbody_me_wf_created_by', 'custbody_me_delegate_approver',
                     'custbody_me_wf_in_delegation', 'subsidiarynohierarchy', 'department', 'class',
-                    'location', 'custbody_cseg_cn_cfi', 'lastmodifieddate'
+                    'location', 'custbody_cseg_cn_cfi', 'createdby', 'lastmodifieddate'
                 ]
             });
 
@@ -210,9 +210,13 @@ define(['N/search', 'N/record'], (search, record) => {
                     custbody_cseg_cn_cfi:              res.getValue('custbody_cseg_cn_cfi'),
                     custbody_cseg_cn_cfi_display:      res.getText('custbody_cseg_cn_cfi'),
                     address:                           null,
+                    create_by_netsuite_id:             res.getValue('createdby'),
+                    create_by_netsuite_name:           res.getText('createdby'),
                     last_modified:                     formatToISO(res.getValue('lastmodifieddate')),
                     applied_to:                        [],
-                    applied_total:                     '0.00'
+                    applied_total:                     '0.00',
+                    workflow_history:                  [],
+                    user_notes:                        []
                 });
             });
 
@@ -337,9 +341,165 @@ define(['N/search', 'N/record'], (search, record) => {
             }
             if (filtersBody.debug) headers.forEach(h => { h.applied_to_debug = dbg; });
 
+            // ── Workflow History via Transaction Search Join (sama seperti Bill Payment) ──
+            let workflowByDoc = {};
+            try {
+                let wfSearch = search.create({
+                    type: 'transaction',
+                    filters: [
+                        ['type', 'anyof', 'VPrep'],
+                        'AND',
+                        ['internalid', 'anyof', ids],
+                        'AND',
+                        ['mainline', 'is', 'T']
+                    ],
+                    columns: [
+                        search.createColumn({ name: 'internalid' }),
+                        search.createColumn({ name: 'workflow', join: 'workflowHistory' }),
+                        search.createColumn({ name: 'options', join: 'workflowHistory' }),
+                        search.createColumn({ name: 'notes', join: 'workflowHistory' }),
+                        search.createColumn({ name: 'formulatext', formula: '{workflowhistory.dateenteredstate}', sort: search.Sort.DESC }),
+                        search.createColumn({ name: 'formulatext', formula: '{workflowhistory.dateexitedstate}' })
+                    ]
+                });
+
+                let wfPaged = wfSearch.runPaged({ pageSize: 1000 });
+                wfPaged.pageRanges.forEach(pageRange => {
+                    wfPaged.fetch({ index: pageRange.index }).data.forEach(res => {
+                        let docId = res.getValue('internalid');
+                        let workflowType = res.getText({ name: 'workflow', join: 'workflowHistory' });
+
+                        if (workflowType) {
+                            // parse NetSuite raw options string into an object
+                            let rawOptions = res.getValue({ name: 'options', join: 'workflowHistory' }) || '';
+                            let parsedOptions = {};
+
+                            if (rawOptions) {
+                                let parts = rawOptions.split(/[\x00-\x1F]/);
+                                let i = 0;
+                                let isFieldId = (str) => str && ((str.toUpperCase() === str && str.includes('_')) || str.toLowerCase().startsWith('cust'));
+
+                                while (i < parts.length) {
+                                    let p = parts[i];
+                                    if (!p) {
+                                        i++;
+                                        continue;
+                                    }
+
+                                    if (isFieldId(p)) {
+                                        let typeInd = parts[i + 1];
+                                        let label = parts[i + 2];
+                                        let internalVal = parts[i + 3];
+                                        let displayVal = parts[i + 4];
+
+                                        if (typeInd && typeInd.length === 1 && label) {
+                                            if (isFieldId(displayVal) || displayVal === undefined) {
+                                                parsedOptions[label] = internalVal || '';
+                                                i += 4;
+                                            } else {
+                                                parsedOptions[label] = displayVal;
+                                                parsedOptions[label + ' Id'] = internalVal || '';
+                                                i += 5;
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    i++;
+                                }
+                            }
+
+                            if (!workflowByDoc[docId]) workflowByDoc[docId] = [];
+                            workflowByDoc[docId].push({
+                                workflow:     workflowType,
+                                date_entered: formatToISO(res.getValue({ name: 'formulatext', formula: '{workflowhistory.dateenteredstate}' })),
+                                date_exited:  formatToISO(res.getValue({ name: 'formulatext', formula: '{workflowhistory.dateexitedstate}' })),
+                                options_obj:  parsedOptions,
+                                options:      rawOptions.replace(/[\x00-\x1F]/g, ' | '),
+                                notes:        res.getValue({ name: 'notes', join: 'workflowHistory' })
+                            });
+                        }
+                    });
+                });
+            } catch (wfErr) {
+                headers.forEach(h => {
+                    h.workflow_history_error = {
+                        name:    wfErr.name    || 'UnknownError',
+                        message: wfErr.message || String(wfErr),
+                        stack:   wfErr.stack   || null
+                    };
+                });
+            }
+
+            // ── User Notes (sama seperti Bill Payment) ──
+            let notesByDoc = {};
+            try {
+                let noteSearch = search.create({
+                    type: 'note',
+                    filters: [
+                        search.createFilter({
+                            name:     'internalid',
+                            join:     'transaction',
+                            operator: search.Operator.ANYOF,
+                            values:   ids
+                        })
+                    ],
+                    columns: [
+                        'internalid',
+                        search.createColumn({ name: 'notedate', sort: search.Sort.ASC }),
+                        search.createColumn({ name: 'internalid', join: 'transaction' }),
+                        'notedate',
+                        'author',
+                        'title',
+                        'note',
+                        'direction',
+                        'notetype'
+                    ]
+                });
+
+                let processedNoteIds = {};
+                noteSearch.run().each(res => {
+                    let noteRecordId = res.id;
+                    if (processedNoteIds[noteRecordId]) return true;
+                    processedNoteIds[noteRecordId] = true;
+
+                    let docId = res.getValue({ name: 'internalid', join: 'transaction' });
+                    if (!notesByDoc[docId]) notesByDoc[docId] = [];
+
+                    notesByDoc[docId].push({
+                        date:              formatToISO(res.getValue('notedate')),
+                        author:            res.getValue('author'),
+                        author_display:    res.getText('author'),
+                        title:             res.getValue('title'),
+                        memo:              res.getValue('note'),
+                        direction:         res.getValue('direction'),
+                        direction_display: res.getText('direction'),
+                        type:              res.getValue('notetype'),
+                        type_display:      res.getText('notetype')
+                    });
+
+                    return true;
+                });
+            } catch (noteErr) {
+                headers.forEach(h => { h.user_notes_error = noteErr.message; });
+            }
+
             let data = headers.map(h => {
                 h.applied_to = appliedByDoc[h.prepayment_id] || [];
                 h.applied_total = formatAmount(h.applied_to.reduce((s, a) => s + (parseFloat(a.applied_amount) || 0), 0));
+
+                // Sorting: "Is Final?" = Yes paling atas, lalu date_entered terbaru (sama seperti Bill Payment)
+                let wfHist = workflowByDoc[h.prepayment_id] || [];
+                wfHist.sort((a, b) => {
+                    let aIsFinal = (a.options_obj && a.options_obj['Is Final?'] === 'Yes') ? 1 : 0;
+                    let bIsFinal = (b.options_obj && b.options_obj['Is Final?'] === 'Yes') ? 1 : 0;
+                    if (aIsFinal !== bIsFinal) return bIsFinal - aIsFinal;
+
+                    let timeA = a.date_entered ? new Date(a.date_entered).getTime() : 0;
+                    let timeB = b.date_entered ? new Date(b.date_entered).getTime() : 0;
+                    return timeB - timeA;
+                });
+                h.workflow_history = wfHist;
+                h.user_notes = notesByDoc[h.prepayment_id] || [];
                 return h;
             });
 
