@@ -73,6 +73,27 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
         return d.toISOString();
     }
 
+    /**
+     * Pengganti search.run().each() (maks 4000 hasil) - baca per 1000 baris
+     * pakai getRange. Callback return value diabaikan.
+     */
+    function fetchSearchResults(searchObj, callback) {
+        var start = 0;
+        var batchSize = 1000;
+        var resultSet = searchObj.run();
+        while (true) {
+            var results = resultSet.getRange({ start: start, end: start + batchSize });
+            if (!results || results.length === 0) break;
+
+            for (var i = 0; i < results.length; i++) {
+                callback(results[i]);
+            }
+
+            if (results.length < batchSize) break;
+            start += batchSize;
+        }
+    }
+
     function post(context) {
         try {
 
@@ -89,7 +110,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 'tranid': 'tranid'
             };
             var sortColName = sortMap[sortBy] || 'trandate';
-            var sortDir = sortOrder === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
+            var sortDir = String(sortOrder).toUpperCase() === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
 
             // ── Build filters ─────────────────────────────────────────────────
             var searchFilters = [
@@ -150,7 +171,9 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
             // Apply sort ke kolom yang sesuai
             for (var i = 0; i < columns.length; i++) {
                 if (columns[i].name === sortColName) {
-                    columns[i].sort = sortDir;
+                    // Properti .sort pada Column yang sudah dibuat tidak dipakai search,
+                    // jadi kolomnya dibuat ulang dengan opsi sort.
+                    columns[i] = search.createColumn({ name: sortColName, sort: sortDir });
                     break;
                 }
             }
@@ -180,7 +203,11 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
 
             // ── Build map dari hasil header search ────────────────────────────
             var map = {};
+            // Object.keys(map) mengurutkan key numerik secara ascending dan membuang
+            // urutan sort dari search, jadi urutan hasil disimpan terpisah.
+            var orderedIds = [];
             pageResult.data.forEach(function (r) {
+                orderedIds.push(String(r.id));
                 var fromLocId = r.getValue('location');
                 var toLocId = r.getValue('transferlocation');
                 var subsidiaryId = r.getValue('subsidiary');
@@ -233,7 +260,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 };
             });
 
-            var ids = Object.keys(map);
+            var ids = orderedIds;
 
             // ── useitemcostastransfercost via SuiteQL ───────────────────────────
             // Field ini valid di record.getValue() & kolom asli tabel 'transaction',
@@ -276,7 +303,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                     ]
                 });
 
-                fileSearch.run().each(function (r) {
+                fetchSearchResults(fileSearch, function (r) {
                     var toId = r.getValue('custrecord_msi_transaction_id');
                     if (!toId || !map[toId]) return true;
                     map[toId].files.push({
@@ -318,7 +345,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 });
 
                 var processedNoteIds = {};
-                noteSearch.run().each(function (res) {
+                fetchSearchResults(noteSearch, function (res) {
                     if (processedNoteIds[res.id]) return true;
                     processedNoteIds[res.id] = true;
 
@@ -394,7 +421,7 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 // key: toId + '_' + itemId → array of all rows for this item
                 var lineGroups = {};
 
-                lineSearch.run().each(function (r) {
+                fetchSearchResults(lineSearch, function (r) {
                     var toId = String(r.id);
                     if (!map[toId]) return true;
 
