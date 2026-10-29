@@ -57,7 +57,7 @@
  * lewat msi_post_transfer_order_item_receipt.js (record.transform).
  * =============================================
  */
-define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, search, log) {
+define(['N/record', 'N/format', 'N/search', 'N/log', 'N/workflow', 'N/runtime'], function (record, format, search, log, workflow, runtime) {
 
     function post(context) {
         var files = context.files;
@@ -288,6 +288,73 @@ define(['N/record', 'N/format', 'N/search', 'N/log'], function (record, format, 
                 }
             }
 
+            //Dharma 26 Oct 2026 -- Automatic Submit Approval 
+            // ==============================
+            // CREATE NOTE (FIRST)
+            // ==============================
+            var noteRec = record.create({
+                    type: 'note',
+                    isDynamic: true
+                });
+
+                noteRec.setValue({
+                    fieldId: 'title',
+                    value: context.custbody_msi_createdby_api || 'API Note'
+                });
+
+                noteRec.setValue({
+                    fieldId: 'note',
+                    value: context.note_approval || 'Automatic Submit Approval from API'
+                });
+
+                noteRec.setValue({
+                    fieldId: 'transaction',
+                    value: toId 
+                });
+
+                noteRec.setValue({
+                    fieldId: 'author',
+                    value: runtime.getCurrentUser().id
+                });
+
+               var noteId = noteRec.save();
+
+            // ==============================
+            // UPDATE WORKFLOW
+            // ==============================
+           	try
+			{
+				workflow.trigger({
+					recordId: toId,
+					recordType: record.Type.TRANSFER_ORDER,
+					workflowId: 'customworkflow_me_workflow_approvals_dl',
+					actionId: 'workflowaction_me_init_approve'
+				});
+
+				try 
+				{
+				   record.load({ type: record.Type.TRANSFER_ORDER, id: toId, isDynamic: false });
+				}
+				catch (loadErr) 
+				{
+					log.error({
+						title: 'Submit Approval - gagal force record.load setelah trigger',
+						details: 'trxId ' + toId + ': ' + loadErr.message
+					});
+				}
+            }
+			catch (e) {
+                log.error({title: 'Submit Approval error', details: 'trxId ' + toId + ': ' + e.message});
+				return {
+                    success: false,
+                    message: "Workflow gagal di-trigger: " + e.message,
+                    data: {
+                        id: toId,
+                        noteId: noteId
+                    }
+                };
+            }
+          
             // 6. BUILD RESPONSE
             var fields = search.lookupFields({
                 type: search.Type.TRANSFER_ORDER,

@@ -228,7 +228,8 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                     last_modified: formatToISO(r.getValue('lastmodifieddate')),
                     datecreated: formatToISO(r.getValue('datecreated')),
                     items: [],
-                    files: []
+                    files: [],
+                    user_notes: []
                 };
             });
 
@@ -288,6 +289,58 @@ define(['N/search', 'N/query', 'N/log'], function (search, query, log) {
                 });
             } catch (e) {
                 log.error('File Search Error', e.message);
+            }
+
+            // ── User Notes via N/search (record type 'note') ────────────────────
+            // Pola sama seperti msi_get_bill_payments.js
+            try {
+                var noteSearch = search.create({
+                    type: 'note',
+                    filters: [
+                        search.createFilter({
+                            name: 'internalid',
+                            join: 'transaction',
+                            operator: search.Operator.ANYOF,
+                            values: ids
+                        })
+                    ],
+                    columns: [
+                        'internalid',
+                        search.createColumn({ name: 'notedate', sort: search.Sort.ASC }),
+                        search.createColumn({ name: 'internalid', join: 'transaction' }),
+                        'notedate',
+                        'author',
+                        'title',
+                        'note',
+                        'direction',
+                        'notetype'
+                    ]
+                });
+
+                var processedNoteIds = {};
+                noteSearch.run().each(function (res) {
+                    if (processedNoteIds[res.id]) return true;
+                    processedNoteIds[res.id] = true;
+
+                    var toId = res.getValue({ name: 'internalid', join: 'transaction' });
+                    if (!toId || !map[toId]) return true;
+
+                    map[toId].user_notes.push({
+                        date: formatToISO(res.getValue('notedate')),
+                        author: res.getValue('author'),
+                        author_display: res.getText('author'),
+                        title: res.getValue('title'),
+                        memo: res.getValue('note'),
+                        direction: res.getValue('direction'),
+                        direction_display: res.getText('direction'),
+                        type: res.getValue('notetype'),
+                        type_display: res.getText('notetype')
+                    });
+
+                    return true;
+                });
+            } catch (e) {
+                log.error('User Notes Search Error', e.message);
             }
 
             // ── Line items via Search ─────────────────────────────────────────
