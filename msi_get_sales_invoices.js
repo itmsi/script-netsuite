@@ -16,9 +16,10 @@
    "sort_by"    : "trandate",
    "sort_order" : "DESC",
    "filters": {
-     "tranid"         : "INV-0001",
+     "ids"            : ["123", "456"],
+     "tranid"        : "INV-0001",
      "approvalstatus" : "1",
-     "lastmodified"   : "2026-03-01T00:00:00"
+     "lastmodified"   : "2026-03-01T00:00:00+07:00"
    }
  }
  */
@@ -66,6 +67,14 @@ function formatToISO(dateStr) {
                 ['mainline', 'is', 'T']
             ];
 
+            if (filters.ids) {
+                var ids = Array.isArray(filters.ids) ? filters.ids : String(filters.ids).split(',');
+                ids = ids.map(function (v) { return String(v).trim(); }).filter(Boolean);
+                if (ids.length > 0) {
+                    searchFilters.push('AND', ['internalid', 'anyof', ids]);
+                }
+            }
+
             if (filters.tranid) {
                 searchFilters.push('AND', ['tranid', 'contains', filters.tranid.trim()]);
             }
@@ -76,9 +85,21 @@ function formatToISO(dateStr) {
             }
 
             if (filters.lastmodified) {
-                var d = new Date(filters.lastmodified);
-                var nsDate = d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
-                searchFilters.push('AND', ['lastmodifieddate', 'onorafter', nsDate]);
+                // Ambil komponen tanggal/jam APA ADANYA dari string ISO input
+                // (bukan lewat new Date() + getDate()/getHours()) - getter lokal
+                // itu bergantung ke timezone runtime yang gak konsisten, jadi bisa
+                // geser tanggal/jam. Asumsi: offset di payload sama dengan
+                // timezone akun NetSuite (WIB, +07:00).
+                var lmMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(filters.lastmodified));
+                if (!lmMatch) {
+                    throw new Error("filters.lastmodified tidak valid, gunakan format ISO 'YYYY-MM-DDTHH:mm:ss+07:00': '" + filters.lastmodified + "'.");
+                }
+
+                var lmSqlDate = lmMatch[1] + '-' + lmMatch[2] + '-' + lmMatch[3] + ' ' +
+                    lmMatch[4] + ':' + lmMatch[5] + ':' + (lmMatch[6] || '00');
+
+                var lmFormula = "formulanumeric: CASE WHEN {lastmodifieddate} >= TO_DATE('" + lmSqlDate + "', 'YYYY-MM-DD HH24:MI:SS') THEN 1 ELSE 0 END";
+                searchFilters.push('AND', [lmFormula, 'equalto', '1']);
             }
 
             // Kolom yg diurutkan
