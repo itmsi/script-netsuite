@@ -13,7 +13,7 @@
  {
    "page"       : 1,
    "page_size"  : 20,
-   "sort_by"    : "trandate",
+   "sort_by"    : "lastmodifieddate",
    "sort_order" : "DESC",
    "filters": {
      "ids"            : ["123", "456"],
@@ -57,7 +57,7 @@ function formatToISO(dateStr) {
         try {
             var page      = context.page       || 1;
             var pageSize  = Math.min(context.page_size  || 20, 1000);
-            var sortBy    = context.sort_by    || 'trandate';
+            var sortBy    = context.sort_by    || 'lastmodifieddate';
             var sortOrder = (context.sort_order || 'DESC').toUpperCase();
             var filters   = context.filters    || {};
 
@@ -104,15 +104,23 @@ function formatToISO(dateStr) {
 
             // Kolom yg diurutkan
             var sortColMap = {
-                'trandate' : 'trandate',
-                'tranid'   : 'tranid',
-                'entity'   : 'entity',
-                'status'   : 'status'
+                'trandate'         : 'trandate',
+                'tranid'           : 'tranid',
+                'entity'           : 'entity',
+                'status'           : 'status',
+                'id'               : 'internalid',
+                'lastmodified'     : 'lastmodifieddate',
+                'last_modified'    : 'lastmodifieddate',
+                'lastmodifieddate' : 'lastmodifieddate',
+                'datecreated'      : 'datecreated'
             };
-            var sCol = sortColMap[sortBy] || 'trandate';
+            // Alias dipetakan, nama field NetSuite lain dipakai apa adanya (sama seperti script get lain)
+            var sCol = sortColMap[sortBy] || sortBy;
             var sDir = sortOrder === 'ASC' ? search.Sort.ASC : search.Sort.DESC;
 
             var columns = [
+                // sort harus di-set saat createColumn (assign .sort setelah dibuat tidak berlaku)
+                search.createColumn({ name: sCol, sort: sDir }),
                 search.createColumn({ name: 'tranid' }),
                 search.createColumn({ name: 'entity' }),
                 search.createColumn({ name: 'entityid', join: 'customer' }),
@@ -142,11 +150,12 @@ function formatToISO(dateStr) {
                 search.createColumn({ name: 'datecreated' }),
                 search.createColumn({ name: 'subsidiarynohierarchy' })
             ];
-            
-            // Apply sorting ke salah satu kolom
-            for (var i = 0; i < columns.length; i++) {
-                if (columns[i].name === sCol) columns[i].sort = sDir;
-            }
+
+            // internalid sebagai sort utama (sort_by=id) atau tie-breaker agar paging stabil
+            columns.push(search.createColumn({
+                name: 'internalid',
+                sort: sCol === 'internalid' ? sDir : search.Sort.DESC
+            }));
 
             var invSearch = search.create({
                 type: search.Type.TRANSACTION,
