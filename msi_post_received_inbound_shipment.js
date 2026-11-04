@@ -419,18 +419,36 @@ define(['N/record', 'N/search', 'N/runtime'], function (record, search, runtime)
         }
 
         if (isCheck === 0) {
-            if (itemChecked > 0) {
-                try {
-                    savedId = loadRec.save()
-                    isProcess = 'process'
-                } catch (saveError) {
-                    throw saveError
-                }
-            } else if (shipmentStatus === 'received') {
+            //  if (itemChecked === 0) {
+            //     throw new Error('Tidak ada item yang dapat diproses.')
+            // }else if (itemChecked > 0) {
+            //     try {
+            //         savedId = loadRec.save()
+            //         isProcess = 'process'
+            //     } catch (saveError) {
+            //         throw saveError
+            //     }
+            // } else if (shipmentStatus === 'Received') {
+            //     isProcess = 'success'
+            // }
+
+            if (itemChecked === 0) {
+                throw new Error('Tidak ada item yang dapat diproses.')
+            }
+
+            try 
+            {
+                savedId = loadRec.save()
+                isProcess = 'process'
+            } catch (saveError) {
+                throw saveError
+            }
+
+            if (shipmentStatus === 'Received') {
                 isProcess = 'success'
             }
         } else if (isCheck === 1) {
-            if (grList.length == payloadPoIds.length) {
+            if (grList.length == payloadPoIds.length) { // Base on diskusi dharma dan vivi, jumlah line PO tidak mungkin kebih kecil dari jumlah line di Inbound Shipment
                 isProcess = 'success'
 
                 for (var h = 0; h < irHeaders.length; h++) {
@@ -495,7 +513,7 @@ define(['N/record', 'N/search', 'N/runtime'], function (record, search, runtime)
             var response = {
                 success: true,
                 inbound_shipment_id: result.inboundShipmentId,
-                inbound_shipment_status: result.inboundShipmentStatus,
+                inbound_shipment_status: result.inboundShipmentStatus.toLowerCase(),
                 goods_receipts: result.goodsReceipts
             }
             if (result.isProcess !== null) {
