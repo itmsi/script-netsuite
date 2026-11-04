@@ -27,6 +27,22 @@ define(['N/search', 'N/log'], (search, log) => {
         return `${year}-${pad(month + 1)}-${pad(day)}T${pad(hour)}:${pad(min)}:00+07:00`;
     };
 
+    // Helper getRange berulang (bypass limit 4000 dari .each / forEachResult)
+    const fetchAll = (searchObj, callback) => {
+        let start = 0;
+        const ps = 1000;
+        const resultSet = searchObj.run();
+        while (true) {
+            const results = resultSet.getRange({ start, end: start + ps });
+            if (!results || results.length === 0) break;
+            for (let i = 0; i < results.length; i++) {
+                if (callback(results[i]) === false) return;
+            }
+            if (results.length < ps) break;
+            start += ps;
+        }
+    };
+
     /**
      * POST handler - Get list of Sales Orders
      *
@@ -435,13 +451,13 @@ define(['N/search', 'N/log'], (search, log) => {
                         filters: [['internalid', 'anyof', taxCodeIds]],
                         columns: ['rate']
                     });
-                    taxSearch.run().each((r) => {
+                    fetchAll(taxSearch, (r) => {
                         const rateStr = r.getValue('rate') || "0%";
                         taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
                         return true;
                     });
 
-                    // Fallback search for Tax Groups if needed
+                    // Fallback search for Tax Groups if need
                     const missingIds = taxCodeIds.filter(id => !taxRateMap[id]);
                     if (missingIds.length > 0) {
                         const groupSearch = search.create({
@@ -449,7 +465,7 @@ define(['N/search', 'N/log'], (search, log) => {
                             filters: [['internalid', 'anyof', missingIds]],
                             columns: ['rate']
                         });
-                        groupSearch.run().each((r) => {
+                        fetchAll(groupSearch, (r) => {
                             const rateStr = r.getValue('rate') || "0%";
                             taxRateMap[r.id] = parseFloat(rateStr.replace('%', '')) || 0;
                             return true;
@@ -496,7 +512,7 @@ define(['N/search', 'N/log'], (search, log) => {
                             search.createColumn({ name: 'inventorylocation' })
                         ]
                     });
-                    invSearch.run().each((r) => {
+                    fetchAll(invSearch, (r) => {
                         const iId = String(r.id);
                         const loc = String(r.getValue('inventorylocation'));
                         const key = iId + '_' + loc;
